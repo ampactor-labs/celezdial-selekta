@@ -1364,6 +1364,7 @@ export default function App() {
         engineRef.current.dispose();
         engineRef.current = null;
       }
+      _enginePromise = null;
     };
   }, []);
 
