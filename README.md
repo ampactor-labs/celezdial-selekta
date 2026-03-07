@@ -1,6 +1,6 @@
 # Celezdial Selekta
 
-Polyphonic ambient synthesizer mapped to the zodiac. 12 voices on a chromatic wheel (C–B), toggled by a zodiac keyboard, shaped by 39 knobs across 8 swappable FX chains. Built with React and Tone.js.
+Polyphonic ambient synthesizer mapped to the zodiac. 12 voices toggle on a chromatic keyboard (C–B), shaped by 39 parameter knobs across 8 swappable FX chains (no GUI for swapping around chains yet). Built with React and Tone.js.
 
 ## Signal Chain (Zodiac — active default)
 
@@ -26,7 +26,7 @@ Summing before Chebyshev is the point — polynomial waveshaping on a polyphonic
 
 ## Voicing Strategy
 
-Dim7 octave partitioning prevents semitone adjacencies within any octave. The chromatic scale's 12 notes are distributed across three octaves in diminished-seventh groups:
+Dim7-derived octave partitioning prevents semitone adjacencies within any octave. The chromatic scale's 12 notes are distributed across three octaves in diminished-seventh groups:
 
 | Octave | Notes | Interval pattern |
 |--------|-------|-----------------|
@@ -166,9 +166,9 @@ Eight pre-wired chains — same nodes, different order, different character:
 
 **Eclipse** — Chaos mode. FX params ramp toward extreme values over 16 seconds (feedback 0.87, reverb wet 0.85, chebyshev wet 0.85, spread 120¢ on fat types only, etc.). Toggle off to restore.
 
-**Breathe** — Cycles oscillator type: per-sign (planetary defaults) → fatsine → amsine → fattriangle → amtriangle → fmtriangle → fatsawtooth → fmsine → fatsquare → per-sign → ... On per-sign, each sign uses its ruling planet's oscillator. On uniform types, all 12 signs share one type.
+**[OSC_TYPE]** — Cycles oscillator type: per-sign (planetary defaults) → fatsine → amsine → fattriangle → amtriangle → fmtriangle → fatsawtooth → fmsine → fatsquare → per-sign → ... On per-sign, each sign uses its ruling planet's oscillator. On uniform types, all 12 signs share one type.
 
-**Oracle** — Dot pyramid, always visible. Clicking opens the Controls veil — Eclipse, Breathe, knobs, listen presets, randomize, and snapshot export are all revealed inside. Discoverable, not advertised.
+**Look Within** — Dot pyramid, always visible. Clicking opens the Controls veil — Eclipse, Breathe, knobs, listen presets, randomize, and snapshot export are all revealed inside. Discoverable, not advertised.
 
 **Listen** — Monitor EQ presets for headphones, laptop speakers, phone, or loudspeakers. Auto-detects device type on load via `matchMedia` (phone vs laptop vs headphones default).
 
@@ -202,7 +202,3 @@ npm run dev
 All sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER. Change a value, hear the difference. Alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for tuning.js.
 
 Engine + UI + visuals live in `src/App.jsx`.
-
-## Deploy
-
-Netlify. `npm run build` → `build/`.
