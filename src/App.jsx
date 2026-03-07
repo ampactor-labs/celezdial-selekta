@@ -94,7 +94,13 @@ import React, {
   useMemo,
 } from "react";
 let Tone = null;
-import { Origin, Horoscope } from "circular-natal-horoscope-js";
+let _horoscopeModule = null;
+async function getHoroscope() {
+  if (!_horoscopeModule) {
+    _horoscopeModule = await import("circular-natal-horoscope-js");
+  }
+  return _horoscopeModule;
+}
 import {
   TUNING,
   SHADOW,
@@ -2012,8 +2018,10 @@ export default function App() {
     [applyListenPreset],
   );
 
-  const computeNatalChart = useCallback(() => {
+  const computeNatalChart = useCallback(async () => {
     if (!natalDate) return;
+
+    const { Origin, Horoscope } = await getHoroscope();
 
     const [year, month, day] = natalDate.split("-").map(Number);
     let hour = 12,
@@ -2174,8 +2182,8 @@ export default function App() {
     }, TUNING.retriggerGap);
   }, [ensureEngine, stopNatalPlayback]);
 
-  const computeAndPlay = useCallback(() => {
-    computeNatalChart();
+  const computeAndPlay = useCallback(async () => {
+    await computeNatalChart();
     playNatalChart();
   }, [computeNatalChart, playNatalChart]);
 
