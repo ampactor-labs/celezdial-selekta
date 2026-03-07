@@ -113,6 +113,9 @@ import {
   OCTAVE_GAIN,
   PLANETARY_CHARACTER,
   SIGN_RULERS,
+  CHART_A_COLOR,
+  CHART_B_COLOR,
+  BODY_GLYPHS,
 } from "./tuning";
 import {
   hexToRgb,
@@ -290,16 +293,19 @@ const SIGN_CHARACTER = Object.fromEntries(
   ]),
 );
 
+const STYLE_CHART_A = { color: CHART_A_COLOR };
+const STYLE_CHART_B = { color: CHART_B_COLOR };
+
 // Adaptive voicing: boost gain when fewer voices are active.
-// Formula: 5 × log10(12 / activeCount) dB
-// 12 voices: 0dB, 6: +1.5dB, 3: +3dB, 1: +5.4dB
-function applyAdaptiveVoicing(eng, activeCount) {
+// Formula: 5 × log10(12 / totalActive) dB
+// totalActive = countA + countB across both synth banks.
+function applyAdaptiveVoicing(eng, totalActive) {
   const boost =
-    activeCount > 0 ? 5 * Math.log10(12 / Math.max(1, activeCount)) : 0;
+    totalActive > 0 ? 5 * Math.log10(12 / Math.max(1, totalActive)) : 0;
   for (const name of SIGN_NAMES) {
-    eng.synths[name].set({
-      volume: -9 + (OCTAVE_GAIN[SIGN_CHARACTER[name].octave] || 0) + boost,
-    });
+    const vol = -9 + (OCTAVE_GAIN[SIGN_CHARACTER[name].octave] || 0) + boost;
+    eng.synths[name].set({ volume: vol });
+    if (eng.synthsB) eng.synthsB[name].set({ volume: vol });
   }
 }
 
@@ -344,35 +350,47 @@ const DETECTED_LISTEN_PRESET = (() => {
 
 // ─── Knob Mapping ────────────────────────────────────────────
 
+// Helper: apply a function to both A and B synth banks
+function forBothBanks(eng, fn) {
+  fn(eng.synths, eng.oscTypeTracker, eng.spreadTracker);
+  if (eng.synthsB) fn(eng.synthsB, eng.oscTypeTrackerB, eng.spreadTrackerB);
+}
+
 const KNOB_MAP = {
   // Oscillator internals
   harmonicity: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        const t = eng.oscTypeTracker[name];
-        if (t.startsWith("am") || t.startsWith("fm")) {
-          eng.synths[name].set({ oscillator: { harmonicity: v } });
+      forBothBanks(eng, (synths, oscTypes) => {
+        for (const name of SIGN_NAMES) {
+          const t = oscTypes[name];
+          if (t.startsWith("am") || t.startsWith("fm")) {
+            synths[name].set({ oscillator: { harmonicity: v } });
+          }
         }
-      }
+      });
     },
   },
   modulationIndex: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        if (eng.oscTypeTracker[name].startsWith("fm")) {
-          eng.synths[name].set({ oscillator: { modulationIndex: v } });
+      forBothBanks(eng, (synths, oscTypes) => {
+        for (const name of SIGN_NAMES) {
+          if (oscTypes[name].startsWith("fm")) {
+            synths[name].set({ oscillator: { modulationIndex: v } });
+          }
         }
-      }
+      });
     },
   },
   oscSpread: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        if (eng.oscTypeTracker[name].startsWith("fat")) {
-          eng.synths[name].set({ oscillator: { spread: v } });
-          eng.spreadTracker[name] = v;
+      forBothBanks(eng, (synths, oscTypes, spreadTrk) => {
+        for (const name of SIGN_NAMES) {
+          if (oscTypes[name].startsWith("fat")) {
+            synths[name].set({ oscillator: { spread: v } });
+            spreadTrk[name] = v;
+          }
         }
-      }
+      });
     },
   },
   stagger: {
@@ -381,34 +399,42 @@ const KNOB_MAP = {
   // Voice
   attack: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        eng.synths[name].set({ envelope: { attack: v * SIGN_CHARACTER[name].attackMul } });
-      }
+      forBothBanks(eng, (synths) => {
+        for (const name of SIGN_NAMES) {
+          synths[name].set({ envelope: { attack: v * SIGN_CHARACTER[name].attackMul } });
+        }
+      });
     },
   },
   decay: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        eng.synths[name].set({ envelope: { decay: v * SIGN_CHARACTER[name].decayMul } });
-      }
+      forBothBanks(eng, (synths) => {
+        for (const name of SIGN_NAMES) {
+          synths[name].set({ envelope: { decay: v * SIGN_CHARACTER[name].decayMul } });
+        }
+      });
     },
   },
   sustain: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        eng.synths[name].set({
-          envelope: {
-            sustain: Math.min(1, v * SIGN_CHARACTER[name].sustainMul),
-          },
-        });
-      }
+      forBothBanks(eng, (synths) => {
+        for (const name of SIGN_NAMES) {
+          synths[name].set({
+            envelope: {
+              sustain: Math.min(1, v * SIGN_CHARACTER[name].sustainMul),
+            },
+          });
+        }
+      });
     },
   },
   release: {
     apply: (eng, v) => {
-      for (const name of SIGN_NAMES) {
-        eng.synths[name].set({ envelope: { release: v * SIGN_CHARACTER[name].releaseMul } });
-      }
+      forBothBanks(eng, (synths) => {
+        for (const name of SIGN_NAMES) {
+          synths[name].set({ envelope: { release: v * SIGN_CHARACTER[name].releaseMul } });
+        }
+      });
     },
   },
   // Grit
@@ -593,6 +619,17 @@ const KNOB_MAP = {
   },
 };
 
+const knobScaleProps = Object.fromEntries(
+  Object.entries(KNOB_DEFS).map(([name, def]) => [
+    name,
+    def.scale === "log"
+      ? logMap(def.min, def.max)
+      : def.scale === "step"
+        ? stepMap(def.min, def.max)
+        : {},
+  ]),
+);
+
 // ─── SVG Arc Knob Component ──────────────────────────────────
 
 const Knob = React.memo(function Knob({
@@ -610,6 +647,8 @@ const Knob = React.memo(function Knob({
 
   const norm = mapToNorm ? mapToNorm(value) : (value - min) / (max - min);
   const clampedNorm = Math.max(0, Math.min(1, norm));
+  const normRef = useRef(clampedNorm);
+  normRef.current = clampedNorm;
   const valueAngle = KNOB_START + clampedNorm * KNOB_SWEEP;
 
   const valuePath =
@@ -619,9 +658,9 @@ const Knob = React.memo(function Knob({
   const onPointerDown = useCallback(
     (e) => {
       e.target.setPointerCapture(e.pointerId);
-      dragRef.current = { startY: e.clientY, startNorm: clampedNorm };
+      dragRef.current = { startY: e.clientY, startNorm: normRef.current };
     },
-    [clampedNorm],
+    [],
   );
 
   const onPointerMove = useCallback(
@@ -998,6 +1037,48 @@ async function createEngine() {
     Object.keys(SIGN_CHARACTER).map((s) => [s, SIGN_CHARACTER[s].detuneCents]),
   );
 
+  // ─── Chart B synth bank — same per-sign oscTypes, mirrored pan ──
+  const synthsB = {};
+  const pannersB = {};
+  const spreadTrackerB = {};
+
+  Object.entries(SIGN_CHARACTER).forEach(([name, cfg]) => {
+    const pannerB = new Tone.Panner(-cfg.panBase * 0.3);
+    const synthB = new Tone.PolySynth(Tone.Synth, {
+      maxPolyphony: 1,
+      voice: Tone.Synth,
+      options: {
+        oscillator: {
+          type: cfg.oscType,
+          ...(cfg.oscType.startsWith("fat")
+            ? { count: cfg.oscCount, spread: cfg.oscSpread }
+            : {}),
+        },
+        envelope: {
+          attack: TUNING.attack * cfg.attackMul,
+          decay: TUNING.decay * cfg.decayMul,
+          sustain: Math.min(1, TUNING.sustain * cfg.sustainMul),
+          release: TUNING.release * cfg.releaseMul,
+        },
+        volume: -9 + (OCTAVE_GAIN[cfg.octave] || 0),
+      },
+    });
+    synthB.set({ detune: cfg.detuneCents });
+    synthB.connect(pannerB);
+    pannerB.connect(sumBus);
+    synthsB[name] = synthB;
+    pannersB[name] = pannerB;
+    spreadTrackerB[name] = cfg.oscSpread;
+  });
+
+  const oscTypeTrackerB = Object.fromEntries(
+    Object.entries(SIGN_CHARACTER).map(([name, cfg]) => [name, cfg.oscType]),
+  );
+
+  const detuneTrackerB = Object.fromEntries(
+    Object.keys(SIGN_CHARACTER).map((s) => [s, SIGN_CHARACTER[s].detuneCents]),
+  );
+
   // ─── Group LFOs — one per panGroup, drift all panners in that group ──
 
   const panLfos = {};
@@ -1018,6 +1099,11 @@ async function createEngine() {
     spreadTracker,
     detuneTracker,
     oscTypeTracker,
+    synthsB,
+    pannersB,
+    spreadTrackerB,
+    detuneTrackerB,
+    oscTypeTrackerB,
     setBypass,
     fx: {
       reverb,
@@ -1040,6 +1126,8 @@ async function createEngine() {
       dampSweep.stop();
       Object.values(synths).forEach((s) => s.dispose());
       Object.values(panners).forEach((p) => p.dispose());
+      Object.values(synthsB).forEach((s) => s.dispose());
+      Object.values(pannersB).forEach((p) => p.dispose());
       Object.values(panLfos).forEach((l) => l.dispose());
       [
         sumBus,
@@ -1068,7 +1156,7 @@ async function createEngine() {
 // ─── Component ───────────────────────────────────────────────
 
 // Reusable gradient data pool — avoids per-frame heap allocation in rAF loop
-const _GRAD_POOL = Array.from({ length: 12 }, () => ({
+const _GRAD_POOL = Array.from({ length: 24 }, () => ({
   sign: '', cx: 0, cy: 0, r: 0, g: 0, b: 0, alpha: 0, falloff: 0,
 }));
 let _gradCount = 0;
@@ -1222,6 +1310,14 @@ export default function App() {
   const [natalLat, setNatalLat] = useState("39.96");
   const [natalLng, setNatalLng] = useState("-82.99");
   const [natalActivations, setNatalActivations] = useState({});
+  // Chart B state
+  const [natalDateB, setNatalDateB] = useState("");
+  const [natalTimeB, setNatalTimeB] = useState("");
+  const [natalLatB, setNatalLatB] = useState("39.96");
+  const [natalLngB, setNatalLngB] = useState("-82.99");
+  const [natalActivationsB, setNatalActivationsB] = useState({});
+  const [activeSignsB, setActiveSignsB] = useState(new Set());
+  const [chartMode, setChartMode] = useState("A"); // "A" or "B"
   const [copyFeedback, setCopyFeedback] = useState(false);
   const initParams = () =>
     Object.fromEntries(
@@ -1233,7 +1329,10 @@ export default function App() {
   const gradientCacheRef = useRef({});
   const paramsRef = useRef(initParams());
   const natalChartDataRef = useRef(null);
+  const natalChartDataBRef = useRef(null);
   const natalTimeoutIdsRef = useRef([]);
+  const activeSignsARef = useRef(new Set());
+  const activeSignsBRef = useRef(new Set());
 
   const setParam = useCallback((name, value) => {
     const p = paramsRef.current;
@@ -1350,18 +1449,6 @@ export default function App() {
     return result;
   }, []);
 
-  const knobScaleProps = useMemo(() => {
-    const props = {};
-    for (const [name, def] of Object.entries(KNOB_DEFS)) {
-      props[name] =
-        def.scale === "log"
-          ? logMap(def.min, def.max)
-          : def.scale === "step"
-            ? stepMap(def.min, def.max)
-            : {};
-    }
-    return props;
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -1468,29 +1555,33 @@ export default function App() {
       lastFrameTimeRef.current = now;
 
       // ── Diagnostic: frame timing ──
-      if (_diag.frameGapCount > 0) {
-        const _gap = now - _diag._prevTickTime;
-        _diag.frameGaps[_diag.frameGapIdx++ % 512] = _gap;
-        if (_gap > 50) _diag.frameDrops++;
+      if (_DEBUG) {
+        if (_diag.frameGapCount > 0) {
+          const _gap = now - _diag._prevTickTime;
+          _diag.frameGaps[_diag.frameGapIdx++ % 512] = _gap;
+          if (_gap > 50) _diag.frameDrops++;
+        }
+        _diag._prevTickTime = now;
+        _diag.frameGapCount++;
       }
-      _diag._prevTickTime = now;
-      _diag.frameGapCount++;
 
       // ── Diagnostic: clock drift probe (every 32 frames) ──
-      if (_diag.ctx && ++_diag._driftFrameCounter >= 8) {
-        _diag._driftFrameCounter = 0;
-        const _raw = _diag.ctx.rawContext;
-        if (_raw.state === 'running' && _raw.getOutputTimestamp) {
-          const _ts = _raw.getOutputTimestamp();
-          if (_ts.contextTime > 0) {
-            const _drift = (_raw.currentTime -
-              (_ts.contextTime + (performance.now() - _ts.performanceTime) / 1000)) * 1000;
-            _diag.driftSamples[_diag.driftIdx++ % 128] = _drift;
-            _diag.driftCount++;
-            _diag.lastDriftMs = _drift;
-            if (_drift < -2) {
-              _diag.driftUnderruns++;
-              console.warn(`[selekta] clock drift ${_drift.toFixed(1)}ms — scheduling starvation`);
+      if (_DEBUG) {
+        if (_diag.ctx && ++_diag._driftFrameCounter >= 8) {
+          _diag._driftFrameCounter = 0;
+          const _raw = _diag.ctx.rawContext;
+          if (_raw.state === 'running' && _raw.getOutputTimestamp) {
+            const _ts = _raw.getOutputTimestamp();
+            if (_ts.contextTime > 0) {
+              const _drift = (_raw.currentTime -
+                (_ts.contextTime + (performance.now() - _ts.performanceTime) / 1000)) * 1000;
+              _diag.driftSamples[_diag.driftIdx++ % 128] = _drift;
+              _diag.driftCount++;
+              _diag.lastDriftMs = _drift;
+              if (_drift < -2) {
+                _diag.driftUnderruns++;
+                console.warn(`[selekta] clock drift ${_drift.toFixed(1)}ms — scheduling starvation`);
+              }
             }
           }
         }
@@ -1505,10 +1596,12 @@ export default function App() {
       _gradCount = 0;
       let hasActive = false;
 
-      for (const sign in visualStateRef.current) {
-        const vs = visualStateRef.current[sign];
+      for (const vsKey in visualStateRef.current) {
+        const vs = visualStateRef.current[vsKey];
         if (!vs) continue;
         hasActive = true;
+        // Strip _B suffix for element/position lookups
+        const sign = vsKey.endsWith("_B") ? vsKey.slice(0, -2) : vsKey;
         if (now < vs.startTime) continue;
         const elapsed = (now - vs.startTime) / 1000;
         let level = vs.envelopeLevel;
@@ -1557,25 +1650,34 @@ export default function App() {
         }
 
         // Key glow — write only when changed (dirty flag)
-        const glowAlpha = level > 0.01 ? Math.min(level * 0.7, 0.45) : 0;
+        const glowAlpha = level > 0.01 ? Math.round(Math.min(level * 0.7, 0.45) * 100) / 100 : 0;
+        // Cache rgb string — only rebuild when color changes
+        if (vs._prevR !== r || vs._prevG !== g || vs._prevB !== b) {
+          vs._glowRgb = `rgb(${r},${g},${b})`;
+          vs._prevR = r; vs._prevG = g; vs._prevB = b;
+        }
         const el = keyRefsRef.current[sign];
         if (el) {
-          const prevGlow = lastGlowRef.current[sign];
+          const prevGlow = lastGlowRef.current[vsKey];
           if (prevGlow !== glowAlpha) {
             el.style.setProperty(
               "--glow-hue",
-              glowAlpha > 0 ? `rgb(${r},${g},${b})` : "transparent",
+              glowAlpha > 0 ? vs._glowRgb : "transparent",
             );
-            el.style.setProperty("--glow-opacity", String(glowAlpha));
-            lastGlowRef.current[sign] = glowAlpha;
+            if (vs._prevGlowAlpha !== glowAlpha) {
+              vs._glowAlphaStr = String(glowAlpha);
+              vs._prevGlowAlpha = glowAlpha;
+            }
+            el.style.setProperty("--glow-opacity", vs._glowAlphaStr);
+            lastGlowRef.current[vsKey] = glowAlpha;
           }
         }
 
         // Emanation — push data for canvas draw (no strings, no getBoundingClientRect)
         const pos = keyPositionsRef.current[sign];
-        if (pos && level > 0.01) {
+        if (pos && level > 0.01 && _gradCount < _GRAD_POOL.length) {
           const _gd = _GRAD_POOL[_gradCount++];
-          _gd.sign = sign;
+          _gd.sign = vsKey;
           _gd.cx = pos.cx;
           _gd.cy = pos.cy;
           _gd.r = r;
@@ -1595,9 +1697,9 @@ export default function App() {
         if (vs.stage === "idle") {
           if (el) {
             el.style.setProperty("--glow-opacity", "0");
-            lastGlowRef.current[sign] = 0;
+            lastGlowRef.current[vsKey] = 0;
           }
-          visualStateRef.current[sign] = null; // preserve V8 hidden class
+          visualStateRef.current[vsKey] = null; // preserve V8 hidden class
         }
       }
 
@@ -1727,46 +1829,50 @@ export default function App() {
     const t = pendingOscTypeRef.current;
     if (!t) return;
     const p = paramsRef.current;
-    if (t === "per-sign") {
-      for (const name of SIGN_NAMES) {
-        const sc = SIGN_CHARACTER[name];
-        eng.synths[name].set({ oscillator: { type: sc.oscType } });
-        eng.oscTypeTracker[name] = sc.oscType;
-        if (sc.oscType.startsWith("fat")) {
-          eng.synths[name].set({ oscillator: { count: sc.oscCount, spread: p.oscSpread } });
-          eng.spreadTracker[name] = p.oscSpread;
+    const applyToBank = (synths, oscTypes, spreadTrk) => {
+      if (t === "per-sign") {
+        for (const name of SIGN_NAMES) {
+          const sc = SIGN_CHARACTER[name];
+          synths[name].set({ oscillator: { type: sc.oscType } });
+          oscTypes[name] = sc.oscType;
+          if (sc.oscType.startsWith("fat")) {
+            synths[name].set({ oscillator: { count: sc.oscCount, spread: p.oscSpread } });
+            spreadTrk[name] = p.oscSpread;
+          }
+          if (sc.oscType.startsWith("am") || sc.oscType.startsWith("fm")) {
+            synths[name].set({ oscillator: { harmonicity: p.harmonicity } });
+          }
+          if (sc.oscType.startsWith("fm")) {
+            synths[name].set({ oscillator: { modulationIndex: p.modulationIndex } });
+          }
         }
-        if (sc.oscType.startsWith("am") || sc.oscType.startsWith("fm")) {
-          eng.synths[name].set({ oscillator: { harmonicity: p.harmonicity } });
-        }
-        if (sc.oscType.startsWith("fm")) {
-          eng.synths[name].set({ oscillator: { modulationIndex: p.modulationIndex } });
+      } else {
+        const isFat = t.startsWith("fat");
+        const isAMFM = t.startsWith("am") || t.startsWith("fm");
+        const isFM = t.startsWith("fm");
+        for (const name of SIGN_NAMES) {
+          synths[name].set({ oscillator: { type: t } });
+          oscTypes[name] = t;
+          if (isFat) {
+            synths[name].set({
+              oscillator: {
+                count: SIGN_CHARACTER[name].oscCount,
+                spread: p.oscSpread,
+              },
+            });
+            spreadTrk[name] = p.oscSpread;
+          }
+          if (isAMFM) {
+            synths[name].set({ oscillator: { harmonicity: p.harmonicity } });
+          }
+          if (isFM) {
+            synths[name].set({ oscillator: { modulationIndex: p.modulationIndex } });
+          }
         }
       }
-    } else {
-      const isFat = t.startsWith("fat");
-      const isAMFM = t.startsWith("am") || t.startsWith("fm");
-      const isFM = t.startsWith("fm");
-      for (const name of SIGN_NAMES) {
-        eng.synths[name].set({ oscillator: { type: t } });
-        eng.oscTypeTracker[name] = t;
-        if (isFat) {
-          eng.synths[name].set({
-            oscillator: {
-              count: SIGN_CHARACTER[name].oscCount,
-              spread: p.oscSpread,
-            },
-          });
-          eng.spreadTracker[name] = p.oscSpread;
-        }
-        if (isAMFM) {
-          eng.synths[name].set({ oscillator: { harmonicity: p.harmonicity } });
-        }
-        if (isFM) {
-          eng.synths[name].set({ oscillator: { modulationIndex: p.modulationIndex } });
-        }
-      }
-    }
+    };
+    applyToBank(eng.synths, eng.oscTypeTracker, eng.spreadTracker);
+    applyToBank(eng.synthsB, eng.oscTypeTrackerB, eng.spreadTrackerB);
     pendingOscTypeRef.current = null;
   }
 
@@ -1779,9 +1885,13 @@ export default function App() {
       if (signType.startsWith("fat")) {
         eng.synths[name].set({ oscillator: { spread: spreadVal } });
         eng.spreadTracker[name] = spreadVal;
+        eng.synthsB[name].set({ oscillator: { spread: spreadVal } });
+        eng.spreadTrackerB[name] = spreadVal;
       }
       eng.synths[name].set({ detune: sc.detuneCents });
       eng.detuneTracker[name] = sc.detuneCents;
+      eng.synthsB[name].set({ detune: sc.detuneCents });
+      eng.detuneTrackerB[name] = sc.detuneCents;
     }
   }
 
@@ -1796,38 +1906,51 @@ export default function App() {
       const decay = p.decay;
       const sustain = p.sustain;
       const release = p.release;
-      setActiveSigns((prev) => {
+      const isB = chartMode === "B" && natalDateB;
+      const synths = isB ? eng.synthsB : eng.synths;
+      const activations = isB ? natalActivationsB : natalActivations;
+      const setSigns = isB ? setActiveSignsB : setActiveSigns;
+      const chartColor = isB ? hexToRgb(CHART_B_COLOR) : null;
+
+      const activeRef = isB ? activeSignsBRef : activeSignsARef;
+      const otherRef = isB ? activeSignsARef : activeSignsBRef;
+
+      setSigns((prev) => {
         const next = new Set(prev);
         if (next.has(sign)) {
           if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-          _diag.noteEvents.push({ type: 'release', sign, time: performance.now() });
-          eng.synths[sign].releaseAll(Tone.now());
-          eng.synths[sign].set({ detune: cfg.detuneCents });
+          _diag.noteEvents.push({ type: 'release', sign, bank: isB ? 'B' : 'A', time: performance.now() });
+          synths[sign].releaseAll(Tone.now());
+          synths[sign].set({ detune: cfg.detuneCents });
           next.delete(sign);
-          const vs = visualStateRef.current[sign];
+          const vsKey = isB ? `${sign}_B` : sign;
+          const vs = visualStateRef.current[vsKey];
           if (vs) {
             vs.releaseStartLevel = vs.envelopeLevel;
             vs.stage = "release";
             vs.startTime = performance.now();
             vs.releaseTime = release * cfg.releaseMul;
           }
-          applyAdaptiveVoicing(eng, next.size);
+          activeRef.current = next;
+          applyAdaptiveVoicing(eng, next.size + otherRef.current.size);
         } else {
           applyPendingOscType(eng);
-          if (natalMode && natalActivations[sign]) {
-            eng.synths[sign].set({
-              detune: natalActivations[sign].detuneCents,
+          if (natalMode && activations[sign]) {
+            synths[sign].set({
+              detune: activations[sign].detuneCents,
             });
           }
-          applyAdaptiveVoicing(eng, next.size + 1);
-          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-          _diag.noteEvents.push({ type: 'attack', sign, time: performance.now() });
-          eng.synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
           next.add(sign);
+          activeRef.current = next;
+          applyAdaptiveVoicing(eng, next.size + otherRef.current.size);
+          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
+          _diag.noteEvents.push({ type: 'attack', sign, bank: isB ? 'B' : 'A', time: performance.now() });
+          synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
           const pal = SIGN_COLORS[sign];
           const ci = colorIndexRef.current[sign] || 0;
           colorIndexRef.current[sign] = (ci + 1) % 4;
-          visualStateRef.current[sign] = {
+          const vsKey = isB ? `${sign}_B` : sign;
+          visualStateRef.current[vsKey] = {
             stage: "attack",
             startTime: performance.now(),
             envelopeLevel: 0,
@@ -1836,15 +1959,15 @@ export default function App() {
             sustainLevel: Math.min(1, sustain * cfg.sustainMul),
             releaseTime: release * cfg.releaseMul * VIS_SPEED,
             releaseStartLevel: 0,
-            activeColor: pal ? hexToRgb(pal[ci]) : [144, 112, 204],
+            activeColor: chartColor || (pal ? hexToRgb(pal[ci]) : [144, 112, 204]),
           };
           if (startLoopRef.current) startLoopRef.current();
         }
-        setStatus(next.size > 0 ? "playing" : "ready");
+        setStatus(next.size > 0 || otherRef.current.size > 0 ? "playing" : "ready");
         return next;
       });
     },
-    [ensureEngine, natalMode, natalActivations],
+    [ensureEngine, natalMode, natalActivations, natalActivationsB, chartMode, natalDateB],
   );
 
   const handleKeyboardClick = useCallback(
@@ -1858,7 +1981,10 @@ export default function App() {
   const stopNatalPlayback = useCallback((eng) => {
     natalTimeoutIdsRef.current.forEach((id) => clearTimeout(id));
     natalTimeoutIdsRef.current = [];
-    for (const name of SIGN_NAMES) eng.synths[name].releaseAll(Tone.now());
+    for (const name of SIGN_NAMES) {
+      eng.synths[name].releaseAll(Tone.now());
+      eng.synthsB[name].releaseAll(Tone.now());
+    }
     const saved = paramsRef.current || initParams();
     eng.fx.reverb.wet.rampTo(saved.reverbWet, 0.5);
   }, []);
@@ -1915,10 +2041,22 @@ export default function App() {
         vs.releaseTime = release * SIGN_CHARACTER[sign].releaseMul * VIS_SPEED;
       }
     }
+    for (const sign of activeSignsB) {
+      const vs = visualStateRef.current[`${sign}_B`];
+      if (vs) {
+        vs.releaseStartLevel = vs.envelopeLevel;
+        vs.stage = "release";
+        vs.startTime = performance.now();
+        vs.releaseTime = release * SIGN_CHARACTER[sign].releaseMul * VIS_SPEED;
+      }
+    }
     applyAdaptiveVoicing(eng, 0);
+    activeSignsARef.current = new Set();
+    activeSignsBRef.current = new Set();
     setActiveSigns(new Set());
+    setActiveSignsB(new Set());
     setStatus("ready");
-  }, [activeSigns, ensureEngine, stopNatalPlayback]);
+  }, [activeSigns, activeSignsB, ensureEngine, stopNatalPlayback]);
 
   const toggleShadow = useCallback(async () => {
     const eng = await ensureEngine();
@@ -1954,6 +2092,8 @@ export default function App() {
             const next = Math.min(current + 4, st.oscSpread);
             eng.spreadTracker[name] = next;
             eng.synths[name].set({ oscillator: { spread: next } });
+            eng.spreadTrackerB[name] = next;
+            eng.synthsB[name].set({ oscillator: { spread: next } });
           }
         }
         if (allDone) Tone.Transport.clear(spreadEventId);
@@ -1969,6 +2109,8 @@ export default function App() {
           const next = current + (target - current) * 0.3;
           eng.detuneTracker[name] = next;
           eng.synths[name].set({ detune: next });
+          eng.detuneTrackerB[name] = next;
+          eng.synthsB[name].set({ detune: next });
         }
       }, 1.2);
       intervals.push(detuneId);
@@ -2018,20 +2160,21 @@ export default function App() {
     [applyListenPreset],
   );
 
-  const computeNatalChart = useCallback(async () => {
-    if (!natalDate) return;
+  // Pure chart computation — reused for both Chart A and Chart B
+  const computeChart = useCallback(async (date, time, lat, lng) => {
+    if (!date) return null;
 
     const { Origin, Horoscope } = await getHoroscope();
 
-    const [year, month, day] = natalDate.split("-").map(Number);
+    const [year, month, day] = date.split("-").map(Number);
     let hour = 12,
       minute = 0;
-    if (natalTime) {
-      [hour, minute] = natalTime.split(":").map(Number);
+    if (time) {
+      [hour, minute] = time.split(":").map(Number);
     }
 
-    const latitude = parseFloat(natalLat) || 0;
-    const longitude = parseFloat(natalLng) || 0;
+    const latitude = parseFloat(lat) || 0;
+    const longitude = parseFloat(lng) || 0;
 
     const origin = new Origin({
       year,
@@ -2083,7 +2226,7 @@ export default function App() {
     }
 
     let ascKey = null;
-    if (natalTime && chart.Ascendant?.Sign) {
+    if (time && chart.Ascendant?.Sign) {
       const ascSign = chart.Ascendant.Sign.label;
       ascKey = SIGNS_BY_LOWERCASE[ascSign.toLowerCase()];
       if (ascKey) {
@@ -2096,7 +2239,6 @@ export default function App() {
       }
     }
 
-    // Build per-body sign/degree map for compositional scheduling
     const bodies = {};
     for (const [label, bodyKey] of Object.entries(bodyMap)) {
       const body = chart.CelestialBodies[bodyKey];
@@ -2116,14 +2258,25 @@ export default function App() {
       };
     }
 
-    natalChartDataRef.current = {
-      activations,
-      bodies,
-    };
+    return { activations, bodies, hasTime: !!time };
+  }, []);
 
-    setNatalActivations(activations);
-    setNatalMode(true);
-  }, [natalDate, natalTime, natalLat, natalLng]);
+  const computeNatalChart = useCallback(async () => {
+    const resultA = await computeChart(natalDate, natalTime, natalLat, natalLng);
+    if (resultA) {
+      natalChartDataRef.current = resultA;
+      setNatalActivations(resultA.activations);
+      setNatalMode(true);
+    }
+
+    if (natalDateB) {
+      const resultB = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
+      if (resultB) {
+        natalChartDataBRef.current = resultB;
+        setNatalActivationsB(resultB.activations);
+      }
+    }
+  }, [natalDate, natalTime, natalLat, natalLng, natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
 
   const playNatalChart = useCallback(async () => {
     if (!natalChartDataRef.current) return;
@@ -2176,6 +2329,7 @@ export default function App() {
           activeColor: pal ? hexToRgb(pal[ci]) : [144, 112, 204],
         };
       });
+      activeSignsARef.current = activatedSigns;
       setActiveSigns(activatedSigns);
       setStatus("playing");
       if (startLoopRef.current) startLoopRef.current();
@@ -2199,7 +2353,10 @@ export default function App() {
           {NATURAL_KEYS.map(
             (sign) => {
               const cfg = SIGNS[sign];
-              const active = activeSigns.has(sign);
+              const activeA = activeSigns.has(sign);
+              const activeB = activeSignsB.has(sign);
+              const hasChartA = natalActivations[sign];
+              const hasChartB = natalActivationsB[sign];
               return (
                 <button
                   key={sign}
@@ -2207,11 +2364,23 @@ export default function App() {
                   ref={(el) => {
                     keyRefsRef.current[sign] = el;
                   }}
-                  className={`cel-key cel-key-natural${active ? " cel-key-active" : ""}`}
+                  className={`cel-key cel-key-natural${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}`}
                   data-sign={sign}
                 >
+                  {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                  {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
                   <span className="cel-key-glyph">{cfg.glyph}</span>
                   <span className="cel-key-name">{sign}</span>
+                  {(hasChartA || hasChartB) && (
+                    <span className="cel-key-bodies">
+                      {hasChartA && hasChartA.planets.map(p => (
+                        <span key={`a-${p}`} className="cel-body-glyph cel-body-a">{BODY_GLYPHS[p] || p[0]}</span>
+                      ))}
+                      {hasChartB && hasChartB.planets.map(p => (
+                        <span key={`b-${p}`} className="cel-body-glyph cel-body-b">{BODY_GLYPHS[p] || p[0]}</span>
+                      ))}
+                    </span>
+                  )}
                   <span className="cel-key-note">{cfg.note}</span>
                 </button>
               );
@@ -2220,7 +2389,10 @@ export default function App() {
           {SHARP_KEYS.map(
             (sign, i) => {
               const cfg = SIGNS[sign];
-              const active = activeSigns.has(sign);
+              const activeA = activeSigns.has(sign);
+              const activeB = activeSignsB.has(sign);
+              const hasChartA = natalActivations[sign];
+              const hasChartB = natalActivationsB[sign];
               return (
                 <button
                   key={sign}
@@ -2228,10 +2400,12 @@ export default function App() {
                   ref={(el) => {
                     keyRefsRef.current[sign] = el;
                   }}
-                  className={`cel-key cel-key-sharp${active ? " cel-key-active" : ""}`}
+                  className={`cel-key cel-key-sharp${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}`}
                   style={SHARP_KEY_STYLES[i]}
                   data-sign={sign}
                 >
+                  {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                  {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
                   <span className="cel-key-glyph">{cfg.glyph}</span>
                   <span className="cel-key-name">{sign}</span>
                 </button>
@@ -2240,8 +2414,25 @@ export default function App() {
           )}
         </div>
 
-        <div className="cel-natal">
+        {/* A/B mode toggle */}
+        {natalDateB && (
+          <div className="cel-ab-toggle">
+            <button
+              type="button"
+              className={`cel-ab-pill${chartMode === "A" ? " cel-ab-active-a" : ""}`}
+              onClick={() => setChartMode("A")}
+            >Chart A</button>
+            <button
+              type="button"
+              className={`cel-ab-pill${chartMode === "B" ? " cel-ab-active-b" : ""}`}
+              onClick={() => setChartMode("B")}
+            >Chart B</button>
+          </div>
+        )}
+
+        <div className="cel-natal cel-natal-dual">
           <div className="cel-natal-body">
+            <div className="cel-natal-chart-label" style={STYLE_CHART_A}>Chart A</div>
             <div className="cel-natal-inputs">
               <label className="cel-natal-field cel-pinned">
                 <span>Birth date</span>
@@ -2286,24 +2477,94 @@ export default function App() {
                 />
               </label>
             </div>
-            <button
-              type="button"
-              className="cel-btn cel-natal-play"
-              onClick={activeSigns.size > 0 ? stopAll : computeAndPlay}
-              disabled={activeSigns.size === 0 && !natalDate}
-            >
-              {activeSigns.size > 0 ? "Stop" : "Play"}
-            </button>
-            {natalActivations && Object.keys(natalActivations).length > 0 && (
-              <div className="cel-natal-grid">
-                {Object.entries(natalActivations).map(([sign, { planets }]) => (
-                  <span key={sign} className="cel-natal-item">
-                    {SIGNS[sign].glyph} {sign}: {planets.join(", ")}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
+
+          <div className="cel-natal-body">
+            <div className="cel-natal-chart-label" style={STYLE_CHART_B}>Chart B</div>
+            <div className="cel-natal-inputs">
+              <label className="cel-natal-field cel-pinned">
+                <span>Birth date</span>
+                <input
+                  type="date"
+                  className="cel-natal-input"
+                  value={natalDateB}
+                  onChange={(e) => setNatalDateB(e.target.value)}
+                />
+              </label>
+              <label className="cel-natal-field cel-pinned">
+                <span>Time</span>
+                <input
+                  type="time"
+                  className="cel-natal-input"
+                  value={natalTimeB}
+                  onChange={(e) => setNatalTimeB(e.target.value)}
+                />
+              </label>
+              <label
+                className={`cel-natal-field${natalLatB ? " has-value" : ""}`}
+              >
+                <span>Latitude</span>
+                <input
+                  type="number"
+                  className="cel-natal-input"
+                  value={natalLatB}
+                  onChange={(e) => setNatalLatB(e.target.value)}
+                  step="0.01"
+                />
+              </label>
+              <label
+                className={`cel-natal-field${natalLngB ? " has-value" : ""}`}
+              >
+                <span>Longitude</span>
+                <input
+                  type="number"
+                  className="cel-natal-input"
+                  value={natalLngB}
+                  onChange={(e) => setNatalLngB(e.target.value)}
+                  step="0.01"
+                />
+              </label>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="cel-btn cel-natal-play"
+            onClick={activeSigns.size > 0 || activeSignsB.size > 0 ? stopAll : computeAndPlay}
+            disabled={activeSigns.size === 0 && activeSignsB.size === 0 && !natalDate}
+          >
+            {activeSigns.size > 0 || activeSignsB.size > 0 ? "Stop" : "Play"}
+          </button>
+
+          {/* Info panel — dual column showing both charts' placements */}
+          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
+            <div className="cel-natal-info-panel">
+              {Object.keys(natalActivations).length > 0 && (
+                <div className="cel-natal-info-col">
+                  <div className="cel-natal-info-header" style={STYLE_CHART_A}>Chart A</div>
+                  <div className="cel-natal-grid">
+                    {Object.entries(natalActivations).map(([sign, { planets }]) => (
+                      <span key={sign} className="cel-natal-item">
+                        {SIGNS[sign].glyph} {sign}: {planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {Object.keys(natalActivationsB).length > 0 && (
+                <div className="cel-natal-info-col">
+                  <div className="cel-natal-info-header" style={STYLE_CHART_B}>Chart B</div>
+                  <div className="cel-natal-grid">
+                    {Object.entries(natalActivationsB).map(([sign, { planets }]) => (
+                      <span key={sign} className="cel-natal-item">
+                        {SIGNS[sign].glyph} {sign}: {planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <details className="cel-veil">
@@ -2686,7 +2947,7 @@ const CSS = `
     flex-direction: column;
     align-items: center;
     gap: 0.15rem;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
   }
@@ -2739,10 +3000,21 @@ const CSS = `
   }
 
   .cel-shadow-active {
+    position: relative;
     background: rgba(255, 80, 30, 0.16);
     border-color: rgba(255, 120, 60, 0.6);
     box-shadow: 0 0 16px rgba(255, 80, 30, 0.3), inset 0 0 12px rgba(255, 120, 60, 0.08);
+  }
+
+  .cel-shadow-active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 28px rgba(255, 80, 30, 0.5), inset 0 0 16px rgba(255, 120, 60, 0.12);
+    opacity: 0;
     animation: cel-shadow-pulse 2s ease-in-out infinite;
+    pointer-events: none;
   }
 
   .cel-shadow-active:hover:not(:disabled) {
@@ -2756,8 +3028,8 @@ const CSS = `
   }
 
   @keyframes cel-shadow-pulse {
-    0%, 100% { box-shadow: 0 0 16px rgba(255, 80, 30, 0.3), inset 0 0 12px rgba(255, 120, 60, 0.08); }
-    50% { box-shadow: 0 0 28px rgba(255, 80, 30, 0.5), inset 0 0 16px rgba(255, 120, 60, 0.12); }
+    0%, 100% { opacity: 0; }
+    50% { opacity: 1; }
   }
 
   /* ── Breathe button ─────────────────────────────────── */
@@ -2805,7 +3077,7 @@ const CSS = `
     padding: 0.3rem 0.8rem;
     font-size: 0.7rem;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
   }
@@ -2965,7 +3237,7 @@ const CSS = `
     color: #605878;
     letter-spacing: 0.03em;
     pointer-events: none;
-    transition: all 0.15s ease;
+    transition: top 0.15s ease, font-size 0.15s ease, color 0.15s ease, transform 0.15s ease;
   }
   .cel-natal-field:focus-within span,
   .cel-natal-field.has-value span,
@@ -3036,6 +3308,159 @@ const CSS = `
     opacity: 0.7;
   }
 
+  /* ── Chart indicator dots on keys ─────────────────────── */
+
+  .cel-chart-dot {
+    position: absolute;
+    top: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  .cel-chart-dot-a {
+    left: 4px;
+    background: ${CHART_A_COLOR};
+    box-shadow: 0 0 4px ${CHART_A_COLOR};
+  }
+
+  .cel-chart-dot-b {
+    right: 4px;
+    background: ${CHART_B_COLOR};
+    box-shadow: 0 0 4px ${CHART_B_COLOR};
+  }
+
+  .cel-key-sharp .cel-chart-dot {
+    width: 5px;
+    height: 5px;
+    top: 3px;
+  }
+  .cel-key-sharp .cel-chart-dot-a { left: 3px; }
+  .cel-key-sharp .cel-chart-dot-b { right: 3px; }
+
+  /* ── Body glyphs on natural keys ────────────────────── */
+
+  .cel-key-bodies {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1px;
+    font-size: 0.55rem;
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .cel-body-glyph {
+    font-size: 0.55rem;
+  }
+
+  .cel-body-a { color: ${CHART_A_COLOR}; }
+  .cel-body-b { color: ${CHART_B_COLOR}; }
+
+  /* ── A/B active key glow colors ─────────────────────── */
+
+  .cel-key-active-a.cel-key-natural {
+    background: #221a3a;
+    border-color: rgba(212, 160, 60, 0.45);
+  }
+
+  .cel-key-active-b.cel-key-natural {
+    background: #1a2a3a;
+    border-color: rgba(60, 168, 212, 0.45);
+  }
+
+  .cel-key-active-a.cel-key-active-b.cel-key-natural {
+    border-image: linear-gradient(135deg, ${CHART_A_COLOR}, ${CHART_B_COLOR}) 1;
+  }
+
+  .cel-key-active-a.cel-key-sharp {
+    background: #3a2a10;
+    border-color: rgba(212, 160, 60, 0.5);
+  }
+
+  .cel-key-active-b.cel-key-sharp {
+    background: #102a3a;
+    border-color: rgba(60, 168, 212, 0.5);
+  }
+
+  /* ── A/B mode toggle ────────────────────────────────── */
+
+  .cel-ab-toggle {
+    display: flex;
+    gap: 0;
+    justify-content: center;
+    margin-bottom: 0.8rem;
+  }
+
+  .cel-ab-pill {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(180, 140, 255, 0.12);
+    color: #8878a0;
+    padding: 0.35rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .cel-ab-pill:first-child { border-radius: 20px 0 0 20px; }
+  .cel-ab-pill:last-child { border-radius: 0 20px 20px 0; }
+
+  .cel-ab-active-a {
+    background: rgba(212, 160, 60, 0.15);
+    border-color: ${CHART_A_COLOR};
+    color: ${CHART_A_COLOR};
+  }
+
+  .cel-ab-active-b {
+    background: rgba(60, 168, 212, 0.15);
+    border-color: ${CHART_B_COLOR};
+    color: ${CHART_B_COLOR};
+  }
+
+  /* ── Dual natal chart layout ────────────────────────── */
+
+  .cel-natal-dual {
+    max-width: 560px;
+  }
+
+  .cel-natal-dual .cel-natal-body {
+    padding: 0.5rem 0;
+  }
+
+  .cel-natal-chart-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+    opacity: 0.8;
+  }
+
+  /* ── Info panel ─────────────────────────────────────── */
+
+  .cel-natal-info-panel {
+    display: flex;
+    gap: 1rem;
+    padding: 0.5rem 0;
+  }
+
+  .cel-natal-info-col {
+    flex: 1;
+  }
+
+  .cel-natal-info-header {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+    opacity: 0.8;
+  }
+
   @media (max-width: 600px) {
     .cel-root { padding: 8px 8px calc(3rem + env(safe-area-inset-bottom, 0px)); }
     .cel-keyboard { gap: 2px; }
@@ -3045,5 +3470,16 @@ const CSS = `
     .cel-key-glyph { font-size: 14px; }
     .cel-listen { flex-wrap: wrap; }
     .cel-group-row { flex-direction: column; }
+    .cel-natal-info-panel { flex-direction: column; gap: 0.5rem; }
+    .cel-key-bodies { font-size: 0.45rem; }
+    .cel-body-glyph { font-size: 0.45rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 `;
