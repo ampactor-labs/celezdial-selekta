@@ -125,19 +125,6 @@ import {
 } from "./utils";
 
 // ─── Font Constants ───────────────────────────────────────────
-// "'Rudelsberg', serif"
-// "'Rudelsberg Alternate', serif"
-// "'Rudelsberg Titel', serif"
-// "'Rudelsberg Initialen', serif"
-// "'Rudelsberg Schmuck', serif"
-// "'Rudelsberg Plakatschrift', serif"
-// "'Spiral ST', serif"
-// "'Gerakent', serif"
-// "'Xagetif', serif"
-// "'Gesego', serif"
-// "'Salty Mussy', serif"
-// "'Ruigslay', serif"
-// "'Soiglat', serif"
 const FONTS = {
   title: "'Spiral ST', serif",
   body: "system-ui, -apple-system, sans-serif",
