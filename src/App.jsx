@@ -1977,6 +1977,36 @@ export default function App() {
     [toggleSign],
   );
 
+  useEffect(() => {
+    clearTimeout(natalDebounceARef.current);
+    natalDebounceARef.current = setTimeout(async () => {
+      const gen = ++natalGenARef.current;
+      if (natalDate) {
+        const result = await computeChart(natalDate, natalTime, natalLat, natalLng);
+        if (gen !== natalGenARef.current) return;
+        setNatalActivations(result ? result.activations : {});
+      } else {
+        setNatalActivations({});
+      }
+    }, 300);
+    return () => clearTimeout(natalDebounceARef.current);
+  }, [natalDate, natalTime, natalLat, natalLng, computeChart]);
+
+  useEffect(() => {
+    clearTimeout(natalDebounceBRef.current);
+    natalDebounceBRef.current = setTimeout(async () => {
+      const gen = ++natalGenBRef.current;
+      if (natalDateB) {
+        const result = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
+        if (gen !== natalGenBRef.current) return;
+        setNatalActivationsB(result ? result.activations : {});
+      } else {
+        setNatalActivationsB({});
+      }
+    }, 300);
+    return () => clearTimeout(natalDebounceBRef.current);
+  }, [natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
+
   const stopNatalPlayback = useCallback((eng) => {
     for (const name of SIGN_NAMES) {
       eng.synths[name].releaseAll(Tone.now());
@@ -2258,35 +2288,6 @@ export default function App() {
     return { activations, bodies, hasTime: !!time };
   }, []);
 
-  useEffect(() => {
-    clearTimeout(natalDebounceARef.current);
-    natalDebounceARef.current = setTimeout(async () => {
-      const gen = ++natalGenARef.current;
-      if (natalDate) {
-        const result = await computeChart(natalDate, natalTime, natalLat, natalLng);
-        if (gen !== natalGenARef.current) return;
-        setNatalActivations(result ? result.activations : {});
-      } else {
-        setNatalActivations({});
-      }
-    }, 300);
-    return () => clearTimeout(natalDebounceARef.current);
-  }, [natalDate, natalTime, natalLat, natalLng, computeChart]);
-
-  useEffect(() => {
-    clearTimeout(natalDebounceBRef.current);
-    natalDebounceBRef.current = setTimeout(async () => {
-      const gen = ++natalGenBRef.current;
-      if (natalDateB) {
-        const result = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
-        if (gen !== natalGenBRef.current) return;
-        setNatalActivationsB(result ? result.activations : {});
-      } else {
-        setNatalActivationsB({});
-      }
-    }, 300);
-    return () => clearTimeout(natalDebounceBRef.current);
-  }, [natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
 
   return (
     <>
