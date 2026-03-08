@@ -43,8 +43,8 @@
 //
 // Polyphonic gain compensation: boost = 5 × log10(12 / active).
 // 12 voices = 0dB, 6 = +1.5dB, 3 = +3dB, 1 = +5.4dB.
-// Applied in toggleSign (before triggerAttack) and breathe.
-// Stacks with OCTAVE_GAIN (Fletcher-Munson).
+// Applied in toggleSign (before triggerAttack), playNatalChart,
+// and breathe. Stacks with OCTAVE_GAIN (Fletcher-Munson).
 // NOT applied in randomize (chaotic by design).
 //
 // ─── STATE MODEL ────────────────────────────────────────────
@@ -80,8 +80,9 @@
 //                  Each maps 1:1 to an engine parameter. Double-click
 //                  resets to default. Shift+drag for fine control.
 //                  Envelope knobs apply per-sign multipliers.
-// Natal Chart    — Enter birth data, indicators appear reactively.
-//                  Click keys to play.
+// Natal Chart    — Enter birth data, compute planetary positions via
+//                  circular-natal-horoscope-js, remap voice pitches
+//                  to zodiac-derived notes.
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -1303,6 +1304,7 @@ export default function App() {
   const lastGlowRef = useRef({});
   const lastAccentRef = useRef(null);
   const colorIndexRef = useRef({});
+  const [natalMode, setNatalMode] = useState(false);
   const [natalDate, setNatalDate] = useState("1968-01-22");
   const [natalTime, setNatalTime] = useState("");
   const [natalLat, setNatalLat] = useState("39.96");
@@ -1326,10 +1328,9 @@ export default function App() {
   const trailingRenderRef = useRef(null);
   const gradientCacheRef = useRef({});
   const paramsRef = useRef(initParams());
-  const natalDebounceARef = useRef(null);
-  const natalDebounceBRef = useRef(null);
-  const natalGenARef = useRef(0);
-  const natalGenBRef = useRef(0);
+  const natalChartDataRef = useRef(null);
+  const natalChartDataBRef = useRef(null);
+  const natalTimeoutIdsRef = useRef([]);
   const activeSignsARef = useRef(new Set());
   const activeSignsBRef = useRef(new Set());
 
@@ -1823,7 +1824,7 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', warm, { capture: true });
   }, [ensureEngine]);
 
-  // Apply pending osc type from breathe — used in toggleSign
+  // Apply pending osc type from breathe — used in toggleSign + playNatalChart
   function applyPendingOscType(eng) {
     const t = pendingOscTypeRef.current;
     if (!t) return;
@@ -1934,7 +1935,7 @@ export default function App() {
           applyAdaptiveVoicing(eng, next.size + otherRef.current.size);
         } else {
           applyPendingOscType(eng);
-          if (activations[sign]) {
+          if (natalMode && activations[sign]) {
             synths[sign].set({
               detune: activations[sign].detuneCents,
             });
@@ -1966,7 +1967,7 @@ export default function App() {
         return next;
       });
     },
-    [ensureEngine, natalActivations, natalActivationsB, chartMode, natalDateB],
+    [ensureEngine, natalMode, natalActivations, natalActivationsB, chartMode, natalDateB],
   );
 
   const handleKeyboardClick = useCallback(
@@ -1977,37 +1978,9 @@ export default function App() {
     [toggleSign],
   );
 
-  useEffect(() => {
-    clearTimeout(natalDebounceARef.current);
-    natalDebounceARef.current = setTimeout(async () => {
-      const gen = ++natalGenARef.current;
-      if (natalDate) {
-        const result = await computeChart(natalDate, natalTime, natalLat, natalLng);
-        if (gen !== natalGenARef.current) return;
-        setNatalActivations(result ? result.activations : {});
-      } else {
-        setNatalActivations({});
-      }
-    }, 300);
-    return () => clearTimeout(natalDebounceARef.current);
-  }, [natalDate, natalTime, natalLat, natalLng, computeChart]);
-
-  useEffect(() => {
-    clearTimeout(natalDebounceBRef.current);
-    natalDebounceBRef.current = setTimeout(async () => {
-      const gen = ++natalGenBRef.current;
-      if (natalDateB) {
-        const result = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
-        if (gen !== natalGenBRef.current) return;
-        setNatalActivationsB(result ? result.activations : {});
-      } else {
-        setNatalActivationsB({});
-      }
-    }, 300);
-    return () => clearTimeout(natalDebounceBRef.current);
-  }, [natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
-
   const stopNatalPlayback = useCallback((eng) => {
+    natalTimeoutIdsRef.current.forEach((id) => clearTimeout(id));
+    natalTimeoutIdsRef.current = [];
     for (const name of SIGN_NAMES) {
       eng.synths[name].releaseAll(Tone.now());
       eng.synthsB[name].releaseAll(Tone.now());
@@ -2288,6 +2261,85 @@ export default function App() {
     return { activations, bodies, hasTime: !!time };
   }, []);
 
+  const computeNatalChart = useCallback(async () => {
+    const resultA = await computeChart(natalDate, natalTime, natalLat, natalLng);
+    if (resultA) {
+      natalChartDataRef.current = resultA;
+      setNatalActivations(resultA.activations);
+      setNatalMode(true);
+    }
+
+    if (natalDateB) {
+      const resultB = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
+      if (resultB) {
+        natalChartDataBRef.current = resultB;
+        setNatalActivationsB(resultB.activations);
+      }
+    }
+  }, [natalDate, natalTime, natalLat, natalLng, natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
+
+  const playNatalChart = useCallback(async () => {
+    if (!natalChartDataRef.current) return;
+    const eng = await ensureEngine();
+    stopNatalPlayback(eng);
+
+    setTimeout(() => {
+      applyPendingOscType(eng);
+      const p = paramsRef.current || initParams();
+      const { bodies } = natalChartDataRef.current;
+
+      // Deduplicate by sign — first body per sign wins detune
+      const seenSigns = new Set();
+      const chordSigns = [];
+      for (const [, bodyInfo] of Object.entries(bodies)) {
+        const { sign, degree } = bodyInfo;
+        if (seenSigns.has(sign)) continue;
+        seenSigns.add(sign);
+        chordSigns.push({
+          sign,
+          detuneCents: (degree - 15) * TUNING.centsPerDegree,
+        });
+      }
+
+      // Fire signs — simultaneous when stagger=0, cascaded when stagger>0
+      const staggerSec = p.stagger || 0;
+      const now = Tone.now();
+      const nowPerf = performance.now();
+      applyAdaptiveVoicing(eng, chordSigns.length);
+      const activatedSigns = new Set();
+      chordSigns.forEach(({ sign, detuneCents }, i) => {
+        const cfg = SIGN_CHARACTER[sign];
+        const note = `${cfg.note}${cfg.octave}`;
+        eng.synths[sign].set({ detune: detuneCents });
+        eng.synths[sign].triggerAttack(note, now + staggerSec * i, cfg.vel);
+        activatedSigns.add(sign);
+
+        const pal = SIGN_COLORS[sign];
+        const ci = colorIndexRef.current[sign] || 0;
+        colorIndexRef.current[sign] = (ci + 1) % 4;
+        visualStateRef.current[sign] = {
+          stage: "attack",
+          startTime: nowPerf + staggerSec * i * 1000,
+          envelopeLevel: 0,
+          attackTime: p.attack * cfg.attackMul * VIS_SPEED,
+          decayTime: p.decay * cfg.decayMul * VIS_SPEED,
+          sustainLevel: Math.min(1, p.sustain * cfg.sustainMul),
+          releaseTime: p.release * cfg.releaseMul * VIS_SPEED,
+          releaseStartLevel: 0,
+          activeColor: pal ? hexToRgb(pal[ci]) : [144, 112, 204],
+        };
+      });
+      activeSignsARef.current = activatedSigns;
+      setActiveSigns(activatedSigns);
+      setStatus("playing");
+      if (startLoopRef.current) startLoopRef.current();
+    }, TUNING.retriggerGap);
+  }, [ensureEngine, stopNatalPlayback]);
+
+  const computeAndPlay = useCallback(async () => {
+    await computeNatalChart();
+    playNatalChart();
+  }, [computeNatalChart, playNatalChart]);
 
   return (
     <>
@@ -2475,11 +2527,14 @@ export default function App() {
             </div>
           </div>
 
-          {(activeSigns.size > 0 || activeSignsB.size > 0) && (
-            <button type="button" className="cel-btn cel-natal-play" onClick={stopAll}>
-              Stop
-            </button>
-          )}
+          <button
+            type="button"
+            className="cel-btn cel-natal-play"
+            onClick={activeSigns.size > 0 || activeSignsB.size > 0 ? stopAll : computeAndPlay}
+            disabled={activeSigns.size === 0 && activeSignsB.size === 0 && !natalDate}
+          >
+            {activeSigns.size > 0 || activeSignsB.size > 0 ? "Stop" : "Play"}
+          </button>
 
           {/* Info panel — dual column showing both charts' placements */}
           {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
