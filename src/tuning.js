@@ -555,6 +555,29 @@ export const SIGN_RULERS = {
 //
 // Result: 5 fat-type signs, 3 AM signs, 4 FM signs.
 // Fat types use oscCount/oscSpread; AM/FM oscillators don't.
+// ─── Chart Comparison Colors ──────────────────────────────────
+// Chart A = amber/gold, Chart B = teal/cyan.
+// Both contrast well against #0c0c0c background.
+export const CHART_A_COLOR = "#d4a03c";
+export const CHART_B_COLOR = "#3ca8d4";
+
+// ─── Celestial Body Glyphs ───────────────────────────────────
+// Unicode symbols for planetary bodies displayed on keyboard indicators.
+export const BODY_GLYPHS = {
+  Sun: "\u2609",       // ☉
+  Moon: "\u263D",      // ☽
+  Mercury: "\u263F",   // ☿
+  Venus: "\u2640",     // ♀
+  Mars: "\u2642",      // ♂
+  Jupiter: "\u2643",   // ♃
+  Saturn: "\u2644",    // ♄
+  Uranus: "\u2645",    // ♅
+  Neptune: "\u2646",   // ♆
+  Pluto: "\u2647",     // ♇
+  Chiron: "\u26B7",    // ⚷
+  Ascendant: "AC",
+};
+
 export const PLANETARY_CHARACTER = {
   Sun:     { oscType: "fatsine",      attackMul: 0.8, decayMul: 0.9, sustainMul: 1.1, releaseMul: 0.9 },
   Moon:    { oscType: "amsine",       attackMul: 1.2, decayMul: 1.1, sustainMul: 1.0, releaseMul: 1.3 },
