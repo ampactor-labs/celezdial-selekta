@@ -2481,34 +2481,44 @@ export default function App() {
           )}
 
           {/* Info panel — dual column showing both charts' placements */}
-          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
+          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (() => {
+            const keysA = Object.keys(natalActivations);
+            const keysB = Object.keys(natalActivationsB);
+            const shared = keysA.filter(s => keysB.includes(s));
+            return (
             <div className="cel-natal-info-panel">
-              {Object.keys(natalActivations).length > 0 && (
+              {keysA.length > 0 && (
                 <div className="cel-natal-info-col">
-                  <div className="cel-natal-info-header" style={STYLE_CHART_A}>Chart A</div>
+                  <div className="cel-natal-info-header" style={STYLE_CHART_A}>Chart A{natalDate ? ` — ${natalDate}` : ""}</div>
                   <div className="cel-natal-grid">
                     {Object.entries(natalActivations).map(([sign, { planets }]) => (
-                      <span key={sign} className="cel-natal-item">
+                      <span key={sign} className={`cel-natal-item${shared.includes(sign) ? " cel-natal-shared" : ""}`}>
                         {SIGNS[sign].glyph} {sign}: {planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
                       </span>
                     ))}
                   </div>
                 </div>
               )}
-              {Object.keys(natalActivationsB).length > 0 && (
+              {keysB.length > 0 && (
                 <div className="cel-natal-info-col">
-                  <div className="cel-natal-info-header" style={STYLE_CHART_B}>Chart B</div>
+                  <div className="cel-natal-info-header" style={STYLE_CHART_B}>Chart B{natalDateB ? ` — ${natalDateB}` : ""}</div>
                   <div className="cel-natal-grid">
                     {Object.entries(natalActivationsB).map(([sign, { planets }]) => (
-                      <span key={sign} className="cel-natal-item">
+                      <span key={sign} className={`cel-natal-item${shared.includes(sign) ? " cel-natal-shared" : ""}`}>
                         {SIGNS[sign].glyph} {sign}: {planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+              {shared.length > 0 && (
+                <div className="cel-natal-shared-summary">
+                  {shared.length} shared {shared.length === 1 ? "sign" : "signs"}: {shared.map(s => SIGNS[s].glyph).join(" ")}
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
         </div>
 
         <details className="cel-veil">
@@ -3251,6 +3261,18 @@ const CSS = `
     font-size: 11px;
     opacity: 0.7;
   }
+  .cel-natal-shared {
+    opacity: 1;
+    font-weight: 600;
+  }
+  .cel-natal-shared-summary {
+    width: 100%;
+    font-size: 10px;
+    opacity: 0.6;
+    text-align: center;
+    padding-top: 0.3rem;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
 
   /* ── Chart indicator dots on keys ─────────────────────── */
 
@@ -3388,6 +3410,7 @@ const CSS = `
 
   .cel-natal-info-panel {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     padding: 0.5rem 0;
   }
