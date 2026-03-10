@@ -2055,6 +2055,75 @@ export default function App() {
     setStatus("ready");
   }, [activeSigns, activeSignsB, ensureEngine, stopNatalPlayback]);
 
+  const playAll = useCallback(async () => {
+    const eng = await ensureEngine();
+    applyPendingOscType(eng);
+    const p = paramsRef.current || initParams();
+    const stagger = p.stagger ?? 0;
+    let delay = 0;
+
+    for (const sign of KEYBOARD_ORDER) {
+      const inA = !!natalActivations[sign];
+      const inB = !!natalActivationsB[sign];
+      if (!inA && !inB) continue;
+
+      const cfg = SIGN_CHARACTER[sign];
+      const note = `${cfg.note}${cfg.octave}`;
+      const { attack, decay, sustain, release } = p;
+      const now = Tone.now() + delay;
+
+      if (inA && !activeSignsARef.current.has(sign)) {
+        if (natalActivations[sign]) eng.synths[sign].set({ detune: natalActivations[sign].detuneCents });
+        eng.synths[sign].triggerAttack(note, now, cfg.vel);
+        const pal = SIGN_COLORS[sign];
+        const ci = colorIndexRef.current[sign] || 0;
+        colorIndexRef.current[sign] = (ci + 1) % 4;
+        visualStateRef.current[sign] = {
+          stage: "attack", startTime: performance.now() + delay * 1000,
+          envelopeLevel: 0,
+          attackTime: attack * cfg.attackMul * VIS_SPEED,
+          decayTime: decay * cfg.decayMul * VIS_SPEED,
+          sustainLevel: Math.min(1, sustain * cfg.sustainMul),
+          releaseTime: release * cfg.releaseMul * VIS_SPEED,
+          releaseStartLevel: 0,
+          activeColor: pal ? hexToRgb(pal[ci]) : [144, 112, 204],
+        };
+      }
+
+      if (inB && !activeSignsBRef.current.has(sign)) {
+        if (natalActivationsB[sign]) eng.synthsB[sign].set({ detune: natalActivationsB[sign].detuneCents });
+        eng.synthsB[sign].triggerAttack(note, now, cfg.vel);
+        visualStateRef.current[`${sign}_B`] = {
+          stage: "attack", startTime: performance.now() + delay * 1000,
+          envelopeLevel: 0,
+          attackTime: attack * cfg.attackMul * VIS_SPEED,
+          decayTime: decay * cfg.decayMul * VIS_SPEED,
+          sustainLevel: Math.min(1, sustain * cfg.sustainMul),
+          releaseTime: release * cfg.releaseMul * VIS_SPEED,
+          releaseStartLevel: 0,
+          activeColor: hexToRgb(CHART_B_COLOR),
+        };
+      }
+
+      delay += stagger;
+    }
+
+    // Bulk-set active signs after scheduling (use refs for current state)
+    const newA = new Set(activeSignsARef.current);
+    const newB = new Set(activeSignsBRef.current);
+    for (const sign of KEYBOARD_ORDER) {
+      if (natalActivations[sign]) newA.add(sign);
+      if (natalActivationsB[sign]) newB.add(sign);
+    }
+    activeSignsARef.current = newA;
+    activeSignsBRef.current = newB;
+    setActiveSigns(newA);
+    setActiveSignsB(newB);
+    applyAdaptiveVoicing(eng, newA.size + newB.size);
+    if (startLoopRef.current) startLoopRef.current();
+    setStatus("playing");
+  }, [ensureEngine, natalActivations, natalActivationsB]);
+
   const toggleShadow = useCallback(async () => {
     const eng = await ensureEngine();
     const { reverb, echoFeedbackGain, echoCrossfade, vibrato, chebyshev } =
@@ -2467,10 +2536,18 @@ export default function App() {
             </div>
           </div>
 
-          {(activeSigns.size > 0 || activeSignsB.size > 0) && (
-            <button type="button" className="cel-btn cel-natal-play" onClick={stopAll}>
-              Stop
-            </button>
+          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
+            <div className="cel-playback-controls">
+              {(activeSigns.size > 0 || activeSignsB.size > 0) ? (
+                <button type="button" className="cel-btn cel-natal-play" onClick={stopAll}>
+                  Pause
+                </button>
+              ) : (
+                <button type="button" className="cel-btn cel-natal-play" onClick={playAll}>
+                  Play
+                </button>
+              )}
+            </div>
           )}
 
           {/* Info panel — dual column showing both charts' placements */}
@@ -3350,41 +3427,12 @@ const CSS = `
     border-color: rgba(60, 168, 212, 0.5);
   }
 
-  /* ── A/B mode toggle ────────────────────────────────── */
+  /* ── Playback controls ───────────────────────────────── */
 
-  .cel-ab-toggle {
+  .cel-playback-controls {
     display: flex;
-    gap: 0;
     justify-content: center;
     margin-bottom: 0.8rem;
-  }
-
-  .cel-ab-pill {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(180, 140, 255, 0.12);
-    color: #8878a0;
-    padding: 0.35rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .cel-ab-pill:first-child { border-radius: 20px 0 0 20px; }
-  .cel-ab-pill:last-child { border-radius: 0 20px 20px 0; }
-
-  .cel-ab-active-a {
-    background: rgba(212, 160, 60, 0.15);
-    border-color: ${CHART_A_COLOR};
-    color: ${CHART_A_COLOR};
-  }
-
-  .cel-ab-active-b {
-    background: rgba(60, 168, 212, 0.15);
-    border-color: ${CHART_B_COLOR};
-    color: ${CHART_B_COLOR};
   }
 
   /* ── Dual natal chart layout ────────────────────────── */
