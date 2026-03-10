@@ -1960,7 +1960,7 @@ export default function App() {
       }
 
       // After all banks updated: single adaptive voicing + visual loop + status
-      // Refs are current because setState callbacks update them synchronously
+      // Refs updated explicitly (bank.activeRef.current = next) inside updaters above
       const totalActive = activeSignsARef.current.size + activeSignsBRef.current.size;
       applyAdaptiveVoicing(eng, totalActive);
       if (totalActive > 0 && startLoopRef.current) startLoopRef.current();
