@@ -26,6 +26,10 @@ describe("TUNING", () => {
     expect(TUNING.sampleRate).toBeGreaterThanOrEqual(22050);
     expect(TUNING.sampleRate).toBeLessThanOrEqual(96000);
   });
+
+  it("stagger defaults to 0.06s for audible ripple", () => {
+    expect(TUNING.stagger).toBe(0.06);
+  });
 });
 
 describe("KNOB_DEFS", () => {

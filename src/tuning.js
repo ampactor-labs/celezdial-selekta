@@ -114,7 +114,7 @@ export const TUNING = {
   oscSpread: 8, // cents — fat oscillator detuning width (unison thickness)
 
   // ── Stagger / retrigger ──
-  stagger: 0, // seconds — delay between voice entries in natal chord (0 = simultaneous)
+  stagger: 0.06, // seconds — delay between voice entries in natal chord (short ripple)
   retriggerGap: 80, // ms — minimum gap before a voice can retrigger
 
   // ── Phaser (Grit macro, dormant below 0.5) ──
