@@ -164,6 +164,8 @@ Eight pre-wired chains — same nodes, different order, different character:
 | Chorus | RATE, DLY, DPTH, MIX |
 | Phaser | RATE, OCT, BASE, Q, MIX |
 
+**Play/Pause** — Play sweeps all chart-active keys with STGR stagger timing (default 0.06s). Pause releases all voices.
+
 **Eclipse** — Chaos mode. FX params ramp toward extreme values over 16 seconds (feedback 0.87, reverb wet 0.85, chebyshev wet 0.85, spread 120¢ on fat types only, etc.). Toggle off to restore.
 
 **[OSC_TYPE]** — Cycles oscillator type: per-sign (planetary defaults) → fatsine → amsine → fattriangle → amtriangle → fmtriangle → fatsawtooth → fmsine → fatsquare → per-sign → ... On per-sign, each sign uses its ruling planet's oscillator. On uniform types, all 12 signs share one type.
@@ -178,9 +180,15 @@ Eight pre-wired chains — same nodes, different order, different character:
 
 ## Natal Chart
 
-Enter birth date, time, and location to compute a tropical whole-sign horoscope via `circular-natal-horoscope-js`. Each celestial body (Sun, Moon, Mercury through Pluto, Chiron) activates the voice of its zodiac sign — your chart becomes a chord. If birth time is provided, the Ascendant activates its sign too.
+Enter birth data for two people — Chart A and Chart B. Each chart is computed as a tropical whole-sign horoscope via `circular-natal-horoscope-js`. Each celestial body (Sun, Moon, Mercury through Pluto, Chiron) activates the voice of its zodiac sign. If birth time is provided, the Ascendant activates its sign too.
 
-Each body's ecliptic degree within its sign (0–30°) applies microtonal detuning: `(degree - 15) * 3.33¢`. A planet at the start of a sign detunes −50¢, mid-sign stays centered, end of sign +50¢. Two people with Sun in Aries hear different tunings depending on where in Aries their Sun sits.
+**Dual chart comparison** — Both charts are active simultaneously. Keys fire whichever charts own that sign. If only Chart A has Aries, one voice sounds. If both charts have Aries, both voices sound simultaneously — you hear the harmonic relationship between two different tunings of the same sign. Shared keys (signs present in both charts) get a breathing amber+teal glow marking the resonance points between the two natal charts.
+
+**Play/Pause** — Play sweeps all chart-active keys chromatically (C→B) with stagger timing set by the STGR knob (default 0.06s). Pause releases all voices. Manual key clicking always works independently.
+
+**Info panel** — Shows shared signs first (with both charts' planets listed), then unique signs per chart. Plain language context: "Two birth charts compared. Shared signs play both voices together."
+
+Each body's ecliptic degree within its sign (0–30°) applies microtonal detuning: `(degree - 15) * 3.33¢`. A planet at the start of a sign detunes −50¢, mid-sign stays centered, end of sign +50¢. Two people with Sun in Aries hear different tunings depending on where in Aries their Sun sits — when both voices sound together, this is the interval you hear.
 
 Partial data is fine:
 
@@ -188,7 +196,7 @@ Partial data is fine:
 - **Date + time** — planets + Ascendant (Ascendant accuracy improves with location)
 - **All four fields** — fully accurate positions
 
-Natal chord fires simultaneously (stagger 0) and rings until manually stopped — ADSR envelope sustains with no auto-cutoff. Single "Compute & Play" button. Manual key exploration is always available — toggling keys doesn't interfere with the natal chord.
+Manual key exploration is always available — toggling keys doesn't interfere with the chart voices.
 
 ## Setup
 
