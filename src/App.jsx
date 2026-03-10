@@ -2380,7 +2380,7 @@ export default function App() {
                   ref={(el) => {
                     keyRefsRef.current[sign] = el;
                   }}
-                  className={`cel-key cel-key-natural${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}`}
+                  className={`cel-key cel-key-natural${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
                   data-sign={sign}
                 >
                   {(hasChartA || hasChartB) && (
@@ -2420,7 +2420,7 @@ export default function App() {
                   ref={(el) => {
                     keyRefsRef.current[sign] = el;
                   }}
-                  className={`cel-key cel-key-sharp${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}`}
+                  className={`cel-key cel-key-sharp${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
                   style={SHARP_KEY_STYLES[i]}
                   data-sign={sign}
                 >
@@ -3379,6 +3379,21 @@ const CSS = `
   .cel-key-sharp .cel-chart-dot {
     width: 5px;
     height: 5px;
+  }
+
+  /* ── Shared key breathing glow ───────────────────────── */
+
+  @keyframes cel-shared-breathe {
+    0%, 100% {
+      box-shadow: 0 0 4px rgba(212, 160, 60, 0.3), 0 0 4px rgba(60, 168, 212, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 10px rgba(212, 160, 60, 0.5), 0 0 10px rgba(60, 168, 212, 0.5);
+    }
+  }
+
+  .cel-key-shared {
+    animation: cel-shared-breathe 3s ease-in-out infinite;
   }
 
   /* ── Body glyphs on natural keys ────────────────────── */
