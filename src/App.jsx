@@ -2314,8 +2314,12 @@ export default function App() {
                   className={`cel-key cel-key-natural${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}`}
                   data-sign={sign}
                 >
-                  {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
-                  {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+                  {(hasChartA || hasChartB) && (
+                    <span className="cel-chart-dots">
+                      {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                      {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+                    </span>
+                  )}
                   <span className="cel-key-glyph">{cfg.glyph}</span>
                   <span className="cel-key-name">{sign}</span>
                   {(hasChartA || hasChartB) && (
@@ -2351,8 +2355,12 @@ export default function App() {
                   style={SHARP_KEY_STYLES[i]}
                   data-sign={sign}
                 >
-                  {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
-                  {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+                  {(hasChartA || hasChartB) && (
+                    <span className="cel-chart-dots">
+                      {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                      {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+                    </span>
+                  )}
                   <span className="cel-key-glyph">{cfg.glyph}</span>
                   <span className="cel-key-name">{sign}</span>
                 </button>
@@ -3276,33 +3284,40 @@ const CSS = `
 
   /* ── Chart indicator dots on keys ─────────────────────── */
 
-  .cel-chart-dot {
+  .cel-chart-dots {
     position: absolute;
     top: 4px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .cel-chart-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .cel-chart-dot-a {
-    left: 4px;
     background: ${CHART_A_COLOR};
     box-shadow: 0 0 4px ${CHART_A_COLOR};
   }
 
   .cel-chart-dot-b {
-    right: 4px;
     background: ${CHART_B_COLOR};
     box-shadow: 0 0 4px ${CHART_B_COLOR};
   }
 
+  .cel-key-sharp .cel-chart-dots {
+    top: 3px;
+  }
   .cel-key-sharp .cel-chart-dot {
     width: 5px;
     height: 5px;
-    top: 3px;
   }
-  .cel-key-sharp .cel-chart-dot-a { left: 3px; }
-  .cel-key-sharp .cel-chart-dot-b { right: 3px; }
 
   /* ── Body glyphs on natural keys ────────────────────── */
 
