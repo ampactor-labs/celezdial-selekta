@@ -1315,7 +1315,6 @@ export default function App() {
   const [natalLngB, setNatalLngB] = useState("-82.99");
   const [natalActivationsB, setNatalActivationsB] = useState({});
   const [activeSignsB, setActiveSignsB] = useState(new Set());
-  const [chartMode, setChartMode] = useState("A"); // "A" or "B"
   const [copyFeedback, setCopyFeedback] = useState(false);
   const initParams = () =>
     Object.fromEntries(
@@ -1901,72 +1900,73 @@ export default function App() {
       if (!cfg) return;
       const note = `${cfg.note}${cfg.octave}`;
       const p = paramsRef.current || initParams();
-      const attack = p.attack;
-      const decay = p.decay;
-      const sustain = p.sustain;
-      const release = p.release;
-      const isB = chartMode === "B" && natalDateB;
-      const synths = isB ? eng.synthsB : eng.synths;
-      const activations = isB ? natalActivationsB : natalActivations;
-      const setSigns = isB ? setActiveSignsB : setActiveSigns;
-      const chartColor = isB ? hexToRgb(CHART_B_COLOR) : null;
+      const { attack, decay, sustain, release } = p;
 
-      const activeRef = isB ? activeSignsBRef : activeSignsARef;
-      const otherRef = isB ? activeSignsARef : activeSignsBRef;
+      // Determine which banks this sign belongs to
+      const inA = !!natalActivations[sign];
+      const inB = !!natalActivationsB[sign];
+      // If no chart data at all, default to bank A (manual play)
+      const banks = [];
+      if (inA || (!inA && !inB)) banks.push({ key: "A", synths: eng.synths, activations: natalActivations, setSigns: setActiveSigns, activeRef: activeSignsARef, otherRef: activeSignsBRef, color: null, suffix: "" });
+      if (inB) banks.push({ key: "B", synths: eng.synthsB, activations: natalActivationsB, setSigns: setActiveSignsB, activeRef: activeSignsBRef, otherRef: activeSignsARef, color: hexToRgb(CHART_B_COLOR), suffix: "_B" });
 
-      setSigns((prev) => {
-        const next = new Set(prev);
-        if (next.has(sign)) {
-          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-          _diag.noteEvents.push({ type: 'release', sign, bank: isB ? 'B' : 'A', time: performance.now() });
-          synths[sign].releaseAll(Tone.now());
-          synths[sign].set({ detune: cfg.detuneCents });
-          next.delete(sign);
-          const vsKey = isB ? `${sign}_B` : sign;
-          const vs = visualStateRef.current[vsKey];
-          if (vs) {
-            vs.releaseStartLevel = vs.envelopeLevel;
-            vs.stage = "release";
-            vs.startTime = performance.now();
-            vs.releaseTime = release * cfg.releaseMul;
+      for (const bank of banks) {
+        bank.setSigns((prev) => {
+          const next = new Set(prev);
+          if (next.has(sign)) {
+            // ── Release ──
+            if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
+            _diag.noteEvents.push({ type: "release", sign, bank: bank.key, time: performance.now() });
+            bank.synths[sign].releaseAll(Tone.now());
+            bank.synths[sign].set({ detune: cfg.detuneCents });
+            next.delete(sign);
+            const vs = visualStateRef.current[bank.suffix ? `${sign}${bank.suffix}` : sign];
+            if (vs) {
+              vs.releaseStartLevel = vs.envelopeLevel;
+              vs.stage = "release";
+              vs.startTime = performance.now();
+              vs.releaseTime = release * cfg.releaseMul;
+            }
+            bank.activeRef.current = next;
+          } else {
+            // ── Attack ──
+            applyPendingOscType(eng);
+            if (bank.activations[sign]) {
+              bank.synths[sign].set({ detune: bank.activations[sign].detuneCents });
+            }
+            next.add(sign);
+            bank.activeRef.current = next;
+            if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
+            _diag.noteEvents.push({ type: "attack", sign, bank: bank.key, time: performance.now() });
+            bank.synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
+            const pal = SIGN_COLORS[sign];
+            const ci = colorIndexRef.current[sign] || 0;
+            colorIndexRef.current[sign] = (ci + 1) % 4;
+            const vsKey = bank.suffix ? `${sign}${bank.suffix}` : sign;
+            visualStateRef.current[vsKey] = {
+              stage: "attack",
+              startTime: performance.now(),
+              envelopeLevel: 0,
+              attackTime: attack * cfg.attackMul * VIS_SPEED,
+              decayTime: decay * cfg.decayMul * VIS_SPEED,
+              sustainLevel: Math.min(1, sustain * cfg.sustainMul),
+              releaseTime: release * cfg.releaseMul * VIS_SPEED,
+              releaseStartLevel: 0,
+              activeColor: bank.color || (pal ? hexToRgb(pal[ci]) : [144, 112, 204]),
+            };
           }
-          activeRef.current = next;
-          applyAdaptiveVoicing(eng, next.size + otherRef.current.size);
-        } else {
-          applyPendingOscType(eng);
-          if (activations[sign]) {
-            synths[sign].set({
-              detune: activations[sign].detuneCents,
-            });
-          }
-          next.add(sign);
-          activeRef.current = next;
-          applyAdaptiveVoicing(eng, next.size + otherRef.current.size);
-          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-          _diag.noteEvents.push({ type: 'attack', sign, bank: isB ? 'B' : 'A', time: performance.now() });
-          synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
-          const pal = SIGN_COLORS[sign];
-          const ci = colorIndexRef.current[sign] || 0;
-          colorIndexRef.current[sign] = (ci + 1) % 4;
-          const vsKey = isB ? `${sign}_B` : sign;
-          visualStateRef.current[vsKey] = {
-            stage: "attack",
-            startTime: performance.now(),
-            envelopeLevel: 0,
-            attackTime: attack * cfg.attackMul * VIS_SPEED,
-            decayTime: decay * cfg.decayMul * VIS_SPEED,
-            sustainLevel: Math.min(1, sustain * cfg.sustainMul),
-            releaseTime: release * cfg.releaseMul * VIS_SPEED,
-            releaseStartLevel: 0,
-            activeColor: chartColor || (pal ? hexToRgb(pal[ci]) : [144, 112, 204]),
-          };
-          if (startLoopRef.current) startLoopRef.current();
-        }
-        setStatus(next.size > 0 || otherRef.current.size > 0 ? "playing" : "ready");
-        return next;
-      });
+          return next;
+        });
+      }
+
+      // After all banks updated: single adaptive voicing + visual loop + status
+      // Refs are current because setState callbacks update them synchronously
+      const totalActive = activeSignsARef.current.size + activeSignsBRef.current.size;
+      applyAdaptiveVoicing(eng, totalActive);
+      if (totalActive > 0 && startLoopRef.current) startLoopRef.current();
+      setStatus(totalActive > 0 ? "playing" : "ready");
     },
-    [ensureEngine, natalActivations, natalActivationsB, chartMode, natalDateB],
+    [ensureEngine, natalActivations, natalActivationsB],
   );
 
   const handleKeyboardClick = useCallback(
@@ -2369,21 +2369,6 @@ export default function App() {
           )}
         </div>
 
-        {/* A/B mode toggle */}
-        {natalDateB && (
-          <div className="cel-ab-toggle">
-            <button
-              type="button"
-              className={`cel-ab-pill${chartMode === "A" ? " cel-ab-active-a" : ""}`}
-              onClick={() => setChartMode("A")}
-            >Chart A</button>
-            <button
-              type="button"
-              className={`cel-ab-pill${chartMode === "B" ? " cel-ab-active-b" : ""}`}
-              onClick={() => setChartMode("B")}
-            >Chart B</button>
-          </div>
-        )}
 
         <div className="cel-natal cel-natal-dual">
           <div className="cel-natal-body">
