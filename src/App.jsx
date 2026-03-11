@@ -1303,11 +1303,11 @@ export default function App() {
   const lastGlowRef = useRef({});
   const lastAccentRef = useRef(null);
   const colorIndexRef = useRef({});
-  const [natalDate, setNatalDate] = useState("1968-01-22");
+  const [natalDate, setNatalDate] = useState("");
   const [natalTime, setNatalTime] = useState("");
-  const [natalLat, setNatalLat] = useState(39.96);
-  const [natalLng, setNatalLng] = useState(-82.99);
-  const [cityQueryA, setCityQueryA] = useState("Columbus, Ohio, US");
+  const [natalLat, setNatalLat] = useState(null);
+  const [natalLng, setNatalLng] = useState(null);
+  const [cityQueryA, setCityQueryA] = useState("");
   const [citySuggestionsA, setCitySuggestionsA] = useState([]);
   const [cityLoadingA, setCityLoadingA] = useState(false);
   const [cityHighlightA, setCityHighlightA] = useState(-1);
@@ -1315,9 +1315,9 @@ export default function App() {
   // Chart B state
   const [natalDateB, setNatalDateB] = useState("");
   const [natalTimeB, setNatalTimeB] = useState("");
-  const [natalLatB, setNatalLatB] = useState(39.96);
-  const [natalLngB, setNatalLngB] = useState(-82.99);
-  const [cityQueryB, setCityQueryB] = useState("Columbus, Ohio, US");
+  const [natalLatB, setNatalLatB] = useState(null);
+  const [natalLngB, setNatalLngB] = useState(null);
+  const [cityQueryB, setCityQueryB] = useState("");
   const [citySuggestionsB, setCitySuggestionsB] = useState([]);
   const [cityLoadingB, setCityLoadingB] = useState(false);
   const [cityHighlightB, setCityHighlightB] = useState(-1);
@@ -1328,6 +1328,8 @@ export default function App() {
   const cityDebounceBRef = useRef(null);
   const cityGenARef = useRef(0);
   const cityGenBRef = useRef(0);
+  const citySelectedARef = useRef(false);
+  const citySelectedBRef = useRef(false);
   const initParams = () =>
     Object.fromEntries(
       Object.entries(KNOB_DEFS).map(([k, d]) => [k, d.default]),
@@ -2347,10 +2349,11 @@ export default function App() {
     return res.json();
   };
 
-  const selectCity = (result, setLat, setLng, setQuery, setSuggestions, setHighlight) => {
+  const selectCity = (result, setLat, setLng, setQuery, setSuggestions, setHighlight, selectedRef) => {
     setLat(parseFloat(result.lat));
     setLng(parseFloat(result.lon));
     const parts = result.display_name.split(", ");
+    selectedRef.current = true;
     setQuery(parts.slice(0, 3).join(", "));
     setSuggestions([]);
     setHighlight(-1);
@@ -2375,6 +2378,7 @@ export default function App() {
 
   useEffect(() => {
     clearTimeout(cityDebounceARef.current);
+    if (citySelectedARef.current) { citySelectedARef.current = false; return; }
     if (cityQueryA.length < 2) { setCitySuggestionsA([]); return; }
     setCityLoadingA(true);
     cityDebounceARef.current = setTimeout(async () => {
@@ -2391,6 +2395,7 @@ export default function App() {
 
   useEffect(() => {
     clearTimeout(cityDebounceBRef.current);
+    if (citySelectedBRef.current) { citySelectedBRef.current = false; return; }
     if (cityQueryB.length < 2) { setCitySuggestionsB([]); return; }
     setCityLoadingB(true);
     cityDebounceBRef.current = setTimeout(async () => {
@@ -2550,7 +2555,7 @@ export default function App() {
                     onChange={(e) => { setCityQueryA(e.target.value); setCityHighlightA(-1); }}
                     onBlur={() => setTimeout(() => setCitySuggestionsA([]), 150)}
                     onKeyDown={(e) => handleCityKeyDown(e, citySuggestionsA, cityHighlightA, setCityHighlightA,
-                      (r) => selectCity(r, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA))}
+                      (r) => selectCity(r, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA, citySelectedARef))}
                   />
                   {cityLoadingA && <span className="cel-city-spinner">…</span>}
                 </label>
@@ -2559,7 +2564,7 @@ export default function App() {
                     {citySuggestionsA.map((s, i) => (
                       <li key={s.place_id} role="option" aria-selected={i === cityHighlightA}
                         className={`cel-city-option${i === cityHighlightA ? " highlighted" : ""}`}
-                        onMouseDown={() => selectCity(s, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA)}>
+                        onMouseDown={() => selectCity(s, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA, citySelectedARef)}>
                         {s.display_name}
                       </li>
                     ))}
@@ -2601,7 +2606,7 @@ export default function App() {
                     onChange={(e) => { setCityQueryB(e.target.value); setCityHighlightB(-1); }}
                     onBlur={() => setTimeout(() => setCitySuggestionsB([]), 150)}
                     onKeyDown={(e) => handleCityKeyDown(e, citySuggestionsB, cityHighlightB, setCityHighlightB,
-                      (r) => selectCity(r, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB))}
+                      (r) => selectCity(r, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB, citySelectedBRef))}
                   />
                   {cityLoadingB && <span className="cel-city-spinner">…</span>}
                 </label>
@@ -2610,7 +2615,7 @@ export default function App() {
                     {citySuggestionsB.map((s, i) => (
                       <li key={s.place_id} role="option" aria-selected={i === cityHighlightB}
                         className={`cel-city-option${i === cityHighlightB ? " highlighted" : ""}`}
-                        onMouseDown={() => selectCity(s, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB)}>
+                        onMouseDown={() => selectCity(s, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB, citySelectedBRef)}>
                         {s.display_name}
                       </li>
                     ))}
@@ -3357,11 +3362,13 @@ const CSS = `
     font-size: 0.8rem;
     font-family: inherit;
     width: 100%;
+    min-width: 0;
   }
 
   .cel-natal-field {
     position: relative;
     display: block;
+    min-width: 0;
   }
   .cel-natal-field span {
     position: absolute;
@@ -3385,6 +3392,7 @@ const CSS = `
   .cel-natal-city-wrap {
     grid-column: 1 / -1;
     position: relative;
+    min-width: 0;
   }
   .cel-city-dropdown {
     position: absolute;
