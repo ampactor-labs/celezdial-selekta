@@ -56,9 +56,9 @@
 //                  1:1 to an engine parameter via KNOB_MAP. Shadow
 //                  mode temporarily overrides FX params; when Shadow
 //                  disengages, param values are restored.
-// oscIndex       — null | 0–7. null = per-sign planetary defaults.
-//                  Breathe cycles: null → 0 → ... → 7 → null → ...
-//                  When 0–7, all synths share that OSC_TYPES entry.
+// oscIndex       — 0–7 | null. 0 = fatsine (default). null = per-sign
+//                  planetary defaults. Breathe cycles: 0 → ... → 7 →
+//                  null → 0. When 0–7, all synths share that OSC_TYPES entry.
 // shadow         — Boolean. Shadow/Eclipse mode active. Ramps FX
 //                  params toward chaos targets over rampTime seconds.
 //
@@ -68,10 +68,10 @@
 // Eclipse        — Chaos mode. Ramps all FX toward extreme values,
 //                  widens osc spread (fat types only), randomizes
 //                  detune. Toggle off restores saved param values.
-// Breathe        — Cycles oscillator type: per-sign → fatsine →
-//                  amsine → ... → fatsquare → per-sign. Releases
-//                  active voices first, then switches. On per-sign,
-//                  each sign uses its planetary default.
+// Breathe        — Cycles oscillator type: fatsine → amsine → ... →
+//                  fatsquare → per-sign → fatsine. Releases active
+//                  voices first, then switches. On per-sign, each sign
+//                  uses its planetary default.
 // Oracle dots    — Pyramid of dots below controls row. Clicking
 //                  opens the Controls veil (knobs, listen, randomize).
 //                  Discoverable, not advertised.
@@ -1285,7 +1285,7 @@ export default function App() {
   const [status, setStatus] = useState("idle");
   const [activeSigns, setActiveSigns] = useState(new Set());
   const [shadow, setShadow] = useState(false);
-  const [oscIndex, setOscIndex] = useState(null);
+  const [oscIndex, setOscIndex] = useState(0);
   const [listenPreset, setListenPreset] = useState(DETECTED_LISTEN_PRESET);
   const shadowIntervalsRef = useRef([]);
   const visualStateRef = useRef({});
@@ -1293,8 +1293,8 @@ export default function App() {
   const rootRef = useRef(null);
   const emanationRef = useRef(null);
   const shadowRef = useRef(false);
-  const pendingOscTypeRef = useRef(null);
-  const activeOscTypeRef = useRef(null);
+  const pendingOscTypeRef = useRef(OSC_TYPES[0]);
+  const activeOscTypeRef = useRef(OSC_TYPES[0]);
   const canvasCtxRef = useRef(null);
   const rafIdRef = useRef(null);
   const lastFrameTimeRef = useRef(null);
@@ -2008,7 +2008,7 @@ export default function App() {
       restoreSpreadAndDetune(eng);
       setShadow(false);
     }
-    // Cycle osc type — null → 0 → 1 → ... → 7 → null → ...
+    // Cycle osc type — 0 → 1 → ... → 7 → null (per-sign) → 0 → ...
     const next =
       oscIndex === null
         ? 0
@@ -2538,15 +2538,13 @@ export default function App() {
 
           {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
             <div className="cel-playback-controls">
-              {(activeSigns.size > 0 || activeSignsB.size > 0) ? (
-                <button type="button" className="cel-btn cel-natal-play" onClick={stopAll}>
-                  Pause
-                </button>
-              ) : (
-                <button type="button" className="cel-btn cel-natal-play" onClick={playAll}>
-                  Play
-                </button>
-              )}
+              <button
+                type="button"
+                className="cel-btn cel-natal-play"
+                onClick={activeSigns.size > 0 || activeSignsB.size > 0 ? stopAll : playAll}
+              >
+                {activeSigns.size > 0 || activeSignsB.size > 0 ? "Pause" : "Play"}
+              </button>
             </div>
           )}
 
@@ -2610,6 +2608,11 @@ export default function App() {
         </div>
       </div>
     )}
+    <div className="cel-natal-legend">
+      {Object.entries(BODY_GLYPHS).map(([name, glyph]) => (
+        <span key={name} className="cel-legend-item">{glyph} {name}</span>
+      ))}
+    </div>
   </div>
   );
 })()}
@@ -3518,6 +3521,21 @@ const CSS = `
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+  }
+
+  .cel-natal-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.6rem;
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .cel-legend-item {
+    font-size: 0.6rem;
+    color: #6a5e80;
+    white-space: nowrap;
   }
 
   @media (max-width: 600px) {
