@@ -1162,6 +1162,37 @@ let _gradCount = 0;
 let _prevLevelSum = -1;
 let _prevGradCount = -1;
 
+// Pre-built vsKey → sign lookup — avoids per-frame endsWith + slice string ops
+const _VSKEY_SIGN = {};
+for (const _s of KEYBOARD_ORDER) { _VSKEY_SIGN[_s] = _s; _VSKEY_SIGN[`${_s}_B`] = _s; }
+
+// Per-sign glow accumulator pool — avoids per-frame {} allocation in rAF loop
+// r/g/b/w: weighted accumulator; active: had contributions this frame
+// lr/lg/lb/la: last-written values for component dirty-check (no string needed)
+const _GLOW_POOL = {};
+for (const _s of KEYBOARD_ORDER) {
+  _GLOW_POOL[_s] = { r: 0, g: 0, b: 0, w: 0, active: false, lr: -1, lg: -1, lb: -1, la: -1 };
+}
+
+// Active visual-state list — tick iterates only live entries, not all 24 null slots
+const _VS_ACTIVE = new Array(24);
+let _vsActiveCount = 0;
+
+// Pre-computed RGB triples for all SIGN_COLORS palette entries — no hexToRgb at attack time
+const _DEFAULT_COLOR = [144, 112, 204];
+
+// Default params computed once at module level (KNOB_DEFS is a module constant)
+const _INIT_PARAMS = Object.fromEntries(Object.entries(KNOB_DEFS).map(([k, d]) => [k, d.default]));
+const _SIGN_RGB = {};
+for (const [_sign, _pal] of Object.entries(SIGN_COLORS)) {
+  _SIGN_RGB[_sign] = _pal.slice(0, 4).map(hexToRgb);
+}
+
+// Signs that got glow contributions this frame — flush only these, not all 12
+const _GLOW_DIRTY = new Array(12);
+let _glowDirtyCount = 0;
+let _anyGlowWasActive = false; // true if any sign had glow last frame (guards cleanup loop)
+
 // ─── Diagnostics ──────────────────────────────────────────────
 const _DEBUG = typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).has('debug');
@@ -1280,10 +1311,80 @@ if (typeof window !== 'undefined') {
   };
 }
 
+const KeyboardSection = React.memo(function KeyboardSection({
+  natalActivations,
+  natalActivationsB,
+  onClick,
+  keyRefCallbacks,
+}) {
+  return (
+    <div className="cel-keyboard" onClick={onClick}>
+      {NATURAL_KEYS.map((sign) => {
+        const cfg = SIGNS[sign];
+        const hasChartA = natalActivations[sign];
+        const hasChartB = natalActivationsB[sign];
+        return (
+          <button
+            key={sign}
+            type="button"
+            ref={keyRefCallbacks[sign]}
+            className={`cel-key cel-key-natural${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
+            data-sign={sign}
+          >
+            {(hasChartA || hasChartB) && (
+              <span className="cel-chart-dots">
+                {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+              </span>
+            )}
+            <span className="cel-key-glyph">{cfg.glyph}</span>
+            <span className="cel-key-name">{sign}</span>
+            {(hasChartA || hasChartB) && (
+              <span className="cel-key-bodies">
+                {hasChartA && hasChartA.planets.map(p => (
+                  <span key={`a-${p}`} className="cel-body-glyph cel-body-a">{BODY_GLYPHS[p] || p[0]}</span>
+                ))}
+                {hasChartB && hasChartB.planets.map(p => (
+                  <span key={`b-${p}`} className="cel-body-glyph cel-body-b">{BODY_GLYPHS[p] || p[0]}</span>
+                ))}
+              </span>
+            )}
+            <span className="cel-key-note">{cfg.note}</span>
+          </button>
+        );
+      })}
+      {SHARP_KEYS.map((sign, i) => {
+        const cfg = SIGNS[sign];
+        const hasChartA = natalActivations[sign];
+        const hasChartB = natalActivationsB[sign];
+        return (
+          <button
+            key={sign}
+            type="button"
+            ref={keyRefCallbacks[sign]}
+            className={`cel-key cel-key-sharp${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
+            style={SHARP_KEY_STYLES[i]}
+            data-sign={sign}
+          >
+            {(hasChartA || hasChartB) && (
+              <span className="cel-chart-dots">
+                {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
+                {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
+              </span>
+            )}
+            <span className="cel-key-glyph">{cfg.glyph}</span>
+            <span className="cel-key-name">{sign}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
 export default function App() {
   const engineRef = useRef(null);
   const [status, setStatus] = useState("idle");
-  const [activeSigns, setActiveSigns] = useState(new Set());
+  const [anyActive, setAnyActive] = useState(false);
   const [shadow, setShadow] = useState(false);
   const [oscIndex, setOscIndex] = useState(0);
   const [listenPreset, setListenPreset] = useState(DETECTED_LISTEN_PRESET);
@@ -1300,8 +1401,7 @@ export default function App() {
   const lastFrameTimeRef = useRef(null);
   const keyPositionsRef = useRef({});
   const startLoopRef = useRef(null);
-  const lastGlowRef = useRef({});
-  const lastAccentRef = useRef(null);
+  const lastAccentRef = useRef({ r: -1, g: -1, b: -1 });
   const colorIndexRef = useRef({});
   const [natalDate, setNatalDate] = useState("");
   const [natalTime, setNatalTime] = useState("");
@@ -1312,6 +1412,7 @@ export default function App() {
   const [cityLoadingA, setCityLoadingA] = useState(false);
   const [cityHighlightA, setCityHighlightA] = useState(-1);
   const [natalActivations, setNatalActivations] = useState({});
+  const natalActivationsRef = useRef({});
   // Chart B state
   const [natalDateB, setNatalDateB] = useState("");
   const [natalTimeB, setNatalTimeB] = useState("");
@@ -1322,7 +1423,7 @@ export default function App() {
   const [cityLoadingB, setCityLoadingB] = useState(false);
   const [cityHighlightB, setCityHighlightB] = useState(-1);
   const [natalActivationsB, setNatalActivationsB] = useState({});
-  const [activeSignsB, setActiveSignsB] = useState(new Set());
+  const natalActivationsBRef = useRef({});
   const [copyFeedback, setCopyFeedback] = useState(false);
   const cityDebounceARef = useRef(null);
   const cityDebounceBRef = useRef(null);
@@ -1330,15 +1431,11 @@ export default function App() {
   const cityGenBRef = useRef(0);
   const citySelectedARef = useRef(false);
   const citySelectedBRef = useRef(false);
-  const initParams = () =>
-    Object.fromEntries(
-      Object.entries(KNOB_DEFS).map(([k, d]) => [k, d.default]),
-    );
-  const [params, setParams] = useState(initParams);
+  const [params, setParams] = useState(() => ({ ..._INIT_PARAMS }));
   const renderThrottleRef = useRef(0);
   const trailingRenderRef = useRef(null);
   const gradientCacheRef = useRef({});
-  const paramsRef = useRef(initParams());
+  const paramsRef = useRef({ ..._INIT_PARAMS });
   const natalDebounceARef = useRef(null);
   const natalDebounceBRef = useRef(null);
   const natalGenARef = useRef(0);
@@ -1398,11 +1495,11 @@ export default function App() {
     meta: { name: "untitled", timestamp: new Date().toISOString(), version: "v12" },
     chain: ACTIVE_CHAIN,
     oscType: oscIndex === null ? "per-sign" : OSC_TYPES[oscIndex],
-    signs: Object.fromEntries(SIGN_NAMES.map(s => [s, activeSigns.has(s)])),
+    signs: Object.fromEntries(SIGN_NAMES.map(s => [s, activeSignsARef.current.has(s)])),
     knobs: { ...paramsRef.current },
     listen: listenPreset,
     eclipse: shadow,
-  }), [oscIndex, activeSigns, listenPreset, shadow]);
+  }), [oscIndex, listenPreset, shadow]);
 
   const exportSnapshot = useCallback(() => {
     const snap = buildSnapshot();
@@ -1432,6 +1529,29 @@ export default function App() {
           (v) => formatValue(v, def),
         ]),
       ),
+    [],
+  );
+
+  // Info panel sign sets — memoized so inline IIFE doesn't recompute on unrelated renders
+  const infoPanelSigns = useMemo(() => {
+    const keysA = Object.keys(natalActivations);
+    const keysB = Object.keys(natalActivationsB);
+    const keysASet = new Set(keysA);
+    const keysBSet = new Set(keysB);
+    return {
+      hasAny: keysA.length > 0 || keysB.length > 0,
+      hasBoth: keysA.length > 0 && keysB.length > 0,
+      shared: keysA.filter(s => keysBSet.has(s)),
+      onlyA: keysA.filter(s => !keysBSet.has(s)),
+      onlyB: keysB.filter(s => !keysASet.has(s)),
+      keysA,
+      keysB,
+    };
+  }, [natalActivations, natalActivationsB]);
+
+  // Stable key ref callbacks — same function identity across renders, prevents 24 spurious ref calls
+  const keyRefCallbacks = useMemo(
+    () => Object.fromEntries(KEYBOARD_ORDER.map(sign => [sign, (el) => { keyRefsRef.current[sign] = el; }])),
     [],
   );
 
@@ -1606,14 +1726,19 @@ export default function App() {
         blendB = 0,
         totalWeight = 0;
       _gradCount = 0;
-      let hasActive = false;
+      _glowDirtyCount = 0;
+      const _shadow = shadowRef.current;
 
-      for (const vsKey in visualStateRef.current) {
+      for (let _i = 0; _i < _vsActiveCount; _i++) {
+        const vsKey = _VS_ACTIVE[_i];
         const vs = visualStateRef.current[vsKey];
-        if (!vs) continue;
-        hasActive = true;
-        // Strip _B suffix for element/position lookups
-        const sign = vsKey.endsWith("_B") ? vsKey.slice(0, -2) : vsKey;
+        if (!vs) {
+          // Defensive: orphaned slot — compact and reprocess index
+          _VS_ACTIVE[_i] = _VS_ACTIVE[--_vsActiveCount];
+          _i--;
+          continue;
+        }
+        const sign = _VSKEY_SIGN[vsKey];
         if (now < vs.startTime) continue;
         const elapsed = (now - vs.startTime) / 1000;
         let level = vs.envelopeLevel;
@@ -1649,7 +1774,7 @@ export default function App() {
         }
         vs.envelopeLevel = level;
 
-        const [ar, ag, ab] = vs.activeColor;
+        const ar = vs.activeColor[0], ag = vs.activeColor[1], ab = vs.activeColor[2];
         let r = ar,
           g = ag,
           b = ab;
@@ -1661,27 +1786,21 @@ export default function App() {
           b = Math.round(ab + (darkB - ab) * rp);
         }
 
-        // Key glow — write only when changed (dirty flag)
-        const glowAlpha = level > 0.01 ? Math.round(Math.min(level * 0.7, 0.45) * 100) / 100 : 0;
-        // Cache rgb string — only rebuild when color changes
-        if (vs._prevR !== r || vs._prevG !== g || vs._prevB !== b) {
-          vs._glowRgb = `rgb(${r},${g},${b})`;
-          vs._prevR = r; vs._prevG = g; vs._prevB = b;
-        }
-        const el = keyRefsRef.current[sign];
-        if (el) {
-          const prevGlow = lastGlowRef.current[vsKey];
-          if (prevGlow !== glowAlpha) {
-            el.style.setProperty(
-              "--glow-hue",
-              glowAlpha > 0 ? vs._glowRgb : "transparent",
-            );
-            if (vs._prevGlowAlpha !== glowAlpha) {
-              vs._glowAlphaStr = String(glowAlpha);
-              vs._prevGlowAlpha = glowAlpha;
-            }
-            el.style.setProperty("--glow-opacity", vs._glowAlphaStr);
-            lastGlowRef.current[vsKey] = glowAlpha;
+        // Accumulate glow per element — blended after the loop
+        if (level > 0.01) {
+          const acc = _GLOW_POOL[sign];
+          if (acc.active) {
+            acc.r += r * level;
+            acc.g += g * level;
+            acc.b += b * level;
+            acc.w += level;
+          } else {
+            acc.r = r * level;
+            acc.g = g * level;
+            acc.b = b * level;
+            acc.w = level;
+            acc.active = true;
+            _GLOW_DIRTY[_glowDirtyCount++] = sign;
           }
         }
 
@@ -1696,7 +1815,7 @@ export default function App() {
           _gd.g = g;
           _gd.b = b;
           _gd.alpha = level * 0.38;
-          _gd.falloff = shadowRef.current ? 95 : 78;
+          _gd.falloff = _shadow ? 95 : 78;
         }
 
         if (level > 0.01) {
@@ -1707,11 +1826,41 @@ export default function App() {
         }
 
         if (vs.stage === "idle") {
-          if (el) {
-            el.style.setProperty("--glow-opacity", "0");
-            lastGlowRef.current[vsKey] = 0;
-          }
           visualStateRef.current[vsKey] = null; // preserve V8 hidden class
+          _VS_ACTIVE[_i] = _VS_ACTIVE[--_vsActiveCount];
+          _i--;
+        }
+      }
+      const hasActive = _vsActiveCount > 0;
+
+      // Flush blended glow — only active signs, component dirty-check, no string during sustain
+      for (let _gi = 0; _gi < _glowDirtyCount; _gi++) {
+        const sign = _GLOW_DIRTY[_gi];
+        const acc = _GLOW_POOL[sign];
+        acc.active = false; // reset for next frame
+        const el = keyRefsRef.current[sign];
+        if (!el) continue;
+        const gr = Math.round(acc.r / acc.w);
+        const gg = Math.round(acc.g / acc.w);
+        const gb = Math.round(acc.b / acc.w);
+        const ga = Math.round(Math.min(acc.w * 0.7, 0.45) * 100) / 100;
+        if (gr !== acc.lr || gg !== acc.lg || gb !== acc.lb || ga !== acc.la) {
+          el.style.setProperty("--glow-hue", `rgb(${gr},${gg},${gb})`);
+          el.style.setProperty("--glow-opacity", String(ga));
+          acc.lr = gr; acc.lg = gg; acc.lb = gb; acc.la = ga;
+        }
+      }
+      // Clear glow on signs that had glow last frame but have none this frame
+      const _hadGlow = _anyGlowWasActive;
+      _anyGlowWasActive = _glowDirtyCount > 0;
+      if (_hadGlow) {
+        for (const sign in _GLOW_POOL) {
+          const acc = _GLOW_POOL[sign];
+          if (!acc.active && acc.la !== 0) {
+            const el = keyRefsRef.current[sign];
+            if (el) el.style.setProperty("--glow-opacity", "0");
+            acc.la = 0;
+          }
         }
       }
 
@@ -1742,8 +1891,13 @@ export default function App() {
               const ng = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
               ng.addColorStop(0, `rgba(${gd.r},${gd.g},${gd.b},1)`);
               ng.addColorStop(1, `rgba(${gd.r},${gd.g},${gd.b},0)`);
-              entry = { grad: ng, r: gd.r, g: gd.g, b: gd.b, cx, cy, radius };
-              _cache[gd.sign] = entry;
+              if (entry) {
+                entry.grad = ng; entry.r = gd.r; entry.g = gd.g; entry.b = gd.b;
+                entry.cx = cx; entry.cy = cy; entry.radius = radius;
+              } else {
+                _cache[gd.sign] = { grad: ng, r: gd.r, g: gd.g, b: gd.b, cx, cy, radius };
+              }
+              entry = _cache[gd.sign];
               _diag.gradCacheMisses++;
             } else {
               _diag.gradCacheHits++;
@@ -1756,22 +1910,16 @@ export default function App() {
         }
       }
 
-      // Knob accent — skip write if unchanged
+      // Knob accent — component dirty-check avoids rgbToHex string during sustain
       const rootEl = rootRef.current;
       if (rootEl) {
-        let accent;
-        if (totalWeight > 0.01) {
-          accent = rgbToHex(
-            Math.round(blendR / totalWeight),
-            Math.round(blendG / totalWeight),
-            Math.round(blendB / totalWeight),
-          );
-        } else {
-          accent = KNOB_DEFAULT_COLOR;
-        }
-        if (accent !== lastAccentRef.current) {
-          rootEl.style.setProperty("--knob-accent", accent);
-          lastAccentRef.current = accent;
+        const acr = totalWeight > 0.01 ? Math.round(blendR / totalWeight) : -1;
+        const acg = totalWeight > 0.01 ? Math.round(blendG / totalWeight) : -1;
+        const acb = totalWeight > 0.01 ? Math.round(blendB / totalWeight) : -1;
+        const prev = lastAccentRef.current;
+        if (acr !== prev.r || acg !== prev.g || acb !== prev.b) {
+          rootEl.style.setProperty("--knob-accent", acr < 0 ? KNOB_DEFAULT_COLOR : rgbToHex(acr, acg, acb));
+          prev.r = acr; prev.g = acg; prev.b = acb;
         }
       }
 
@@ -1907,80 +2055,90 @@ export default function App() {
     }
   }
 
+  // Imperative key active state — sets data attributes, bypasses React re-render
+  const updateKeyActive = useCallback((sign) => {
+    const el = keyRefsRef.current[sign];
+    if (!el) return;
+    const aa = activeSignsARef.current.has(sign);
+    const ab = activeSignsBRef.current.has(sign);
+    if (aa || ab) el.setAttribute('data-active', ''); else el.removeAttribute('data-active');
+    if (aa && ab) el.setAttribute('data-both', ''); else el.removeAttribute('data-both');
+  }, []);
+
   const toggleSign = useCallback(
     async (sign) => {
       const eng = await ensureEngine();
       const cfg = SIGN_CHARACTER[sign];
       if (!cfg) return;
       const note = `${cfg.note}${cfg.octave}`;
-      const p = paramsRef.current || initParams();
+      const p = paramsRef.current;
       const { attack, decay, sustain, release } = p;
 
-      // Determine which banks this sign belongs to
-      const inA = !!natalActivations[sign];
-      const inB = !!natalActivationsB[sign];
+      // Determine which banks this sign belongs to (read refs, not state)
+      const _na = natalActivationsRef.current;
+      const _nb = natalActivationsBRef.current;
+      const inA = !!_na[sign];
+      const inB = !!_nb[sign];
       // If no chart data at all, default to bank A (manual play)
       const banks = [];
-      if (inA || (!inA && !inB)) banks.push({ key: "A", synths: eng.synths, activations: natalActivations, setSigns: setActiveSigns, activeRef: activeSignsARef, otherRef: activeSignsBRef, color: null, suffix: "" });
-      if (inB) banks.push({ key: "B", synths: eng.synthsB, activations: natalActivationsB, setSigns: setActiveSignsB, activeRef: activeSignsBRef, otherRef: activeSignsARef, color: hexToRgb(CHART_B_COLOR), suffix: "_B" });
+      if (inA || (!inA && !inB)) banks.push({ key: "A", synths: eng.synths, activations: _na, activeRef: activeSignsARef, suffix: "" });
+      if (inB) banks.push({ key: "B", synths: eng.synthsB, activations: _nb, activeRef: activeSignsBRef, suffix: "_B" });
 
       for (const bank of banks) {
-        bank.setSigns((prev) => {
-          const next = new Set(prev);
-          if (next.has(sign)) {
-            // ── Release ──
-            if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-            _diag.noteEvents.push({ type: "release", sign, bank: bank.key, time: performance.now() });
-            bank.synths[sign].releaseAll(Tone.now());
-            bank.synths[sign].set({ detune: cfg.detuneCents });
-            next.delete(sign);
-            const vs = visualStateRef.current[bank.suffix ? `${sign}${bank.suffix}` : sign];
-            if (vs) {
-              vs.releaseStartLevel = vs.envelopeLevel;
-              vs.stage = "release";
-              vs.startTime = performance.now();
-              vs.releaseTime = release * cfg.releaseMul;
-            }
-            bank.activeRef.current = next;
-          } else {
-            // ── Attack ──
-            applyPendingOscType(eng);
-            if (bank.activations[sign]) {
-              bank.synths[sign].set({ detune: bank.activations[sign].detuneCents });
-            }
-            next.add(sign);
-            bank.activeRef.current = next;
-            if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
-            _diag.noteEvents.push({ type: "attack", sign, bank: bank.key, time: performance.now() });
-            bank.synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
-            const pal = SIGN_COLORS[sign];
-            const ci = colorIndexRef.current[sign] || 0;
-            colorIndexRef.current[sign] = (ci + 1) % 4;
-            const vsKey = bank.suffix ? `${sign}${bank.suffix}` : sign;
-            visualStateRef.current[vsKey] = {
-              stage: "attack",
-              startTime: performance.now(),
-              envelopeLevel: 0,
-              attackTime: attack * cfg.attackMul * VIS_SPEED,
-              decayTime: decay * cfg.decayMul * VIS_SPEED,
-              sustainLevel: Math.min(1, sustain * cfg.sustainMul),
-              releaseTime: release * cfg.releaseMul * VIS_SPEED,
-              releaseStartLevel: 0,
-              activeColor: bank.color || (pal ? hexToRgb(pal[ci]) : [144, 112, 204]),
-            };
+        const activeSet = bank.activeRef.current;
+        if (activeSet.has(sign)) {
+          // ── Release ──
+          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
+          _diag.noteEvents.push({ type: "release", sign, bank: bank.key, time: performance.now() });
+          bank.synths[sign].releaseAll(Tone.now());
+          bank.synths[sign].set({ detune: cfg.detuneCents });
+          activeSet.delete(sign);
+          const vs = visualStateRef.current[bank.suffix ? `${sign}${bank.suffix}` : sign];
+          if (vs) {
+            vs.releaseStartLevel = vs.envelopeLevel;
+            vs.stage = "release";
+            vs.startTime = performance.now();
+            vs.releaseTime = release * cfg.releaseMul;
           }
-          return next;
-        });
+        } else {
+          // ── Attack ──
+          applyPendingOscType(eng);
+          if (bank.activations[sign]) {
+            bank.synths[sign].set({ detune: bank.activations[sign].detuneCents });
+          }
+          activeSet.add(sign);
+          if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
+          _diag.noteEvents.push({ type: "attack", sign, bank: bank.key, time: performance.now() });
+          bank.synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
+          const ci = colorIndexRef.current[sign] || 0;
+          colorIndexRef.current[sign] = (ci + 1) % 4;
+          const vsKey = bank.suffix ? `${sign}${bank.suffix}` : sign;
+          const _hadVs = !!visualStateRef.current[vsKey];
+          visualStateRef.current[vsKey] = {
+            stage: "attack",
+            startTime: performance.now(),
+            envelopeLevel: 0,
+            attackTime: attack * cfg.attackMul * VIS_SPEED,
+            decayTime: decay * cfg.decayMul * VIS_SPEED,
+            sustainLevel: Math.min(1, sustain * cfg.sustainMul),
+            releaseTime: release * cfg.releaseMul * VIS_SPEED,
+            releaseStartLevel: 0,
+            activeColor: _SIGN_RGB[sign]?.[ci] ?? _DEFAULT_COLOR,
+          };
+          if (!_hadVs) _VS_ACTIVE[_vsActiveCount++] = vsKey;
+        }
       }
+      updateKeyActive(sign);
 
       // After all banks updated: single adaptive voicing + visual loop + status
-      // Refs updated explicitly (bank.activeRef.current = next) inside updaters above
       const totalActive = activeSignsARef.current.size + activeSignsBRef.current.size;
       applyAdaptiveVoicing(eng, totalActive);
       if (totalActive > 0 && startLoopRef.current) startLoopRef.current();
-      setStatus(totalActive > 0 ? "playing" : "ready");
+      const nowActive = totalActive > 0;
+      setStatus(nowActive ? "playing" : "ready");
+      setAnyActive(nowActive);
     },
-    [ensureEngine, natalActivations, natalActivationsB],
+    [ensureEngine, updateKeyActive],
   );
 
   const handleKeyboardClick = useCallback(
@@ -1996,7 +2154,7 @@ export default function App() {
       eng.synths[name].releaseAll(Tone.now());
       eng.synthsB[name].releaseAll(Tone.now());
     }
-    const saved = paramsRef.current || initParams();
+    const saved = paramsRef.current;
     eng.fx.reverb.wet.rampTo(saved.reverbWet, 0.5);
   }, []);
 
@@ -2033,17 +2191,17 @@ export default function App() {
     activeOscTypeRef.current = next === null ? null : OSC_TYPES[next];
     setOscIndex(next);
     // Apply immediately if notes are sounding
-    if (activeSigns.size > 0) {
+    if (activeSignsARef.current.size > 0) {
       applyPendingOscType(eng);
     }
-  }, [activeSigns, ensureEngine, oscIndex, shadow]);
+  }, [ensureEngine, oscIndex, shadow]);
 
   const stopAll = useCallback(async () => {
     const eng = await ensureEngine();
     stopNatalPlayback(eng);
-    const p = paramsRef.current || initParams();
+    const p = paramsRef.current;
     const release = p.release;
-    for (const sign of activeSigns) {
+    for (const sign of activeSignsARef.current) {
       const vs = visualStateRef.current[sign];
       if (vs) {
         vs.releaseStartLevel = vs.envelopeLevel;
@@ -2052,7 +2210,7 @@ export default function App() {
         vs.releaseTime = release * SIGN_CHARACTER[sign].releaseMul * VIS_SPEED;
       }
     }
-    for (const sign of activeSignsB) {
+    for (const sign of activeSignsBRef.current) {
       const vs = visualStateRef.current[`${sign}_B`];
       if (vs) {
         vs.releaseStartLevel = vs.envelopeLevel;
@@ -2062,23 +2220,25 @@ export default function App() {
       }
     }
     applyAdaptiveVoicing(eng, 0);
-    activeSignsARef.current = new Set();
-    activeSignsBRef.current = new Set();
-    setActiveSigns(new Set());
-    setActiveSignsB(new Set());
+    activeSignsARef.current.clear();
+    activeSignsBRef.current.clear();
+    for (const s of KEYBOARD_ORDER) updateKeyActive(s);
+    setAnyActive(false);
     setStatus("ready");
-  }, [activeSigns, activeSignsB, ensureEngine, stopNatalPlayback]);
+  }, [ensureEngine, stopNatalPlayback, updateKeyActive]);
 
   const playAll = useCallback(async () => {
     const eng = await ensureEngine();
     applyPendingOscType(eng);
-    const p = paramsRef.current || initParams();
+    const p = paramsRef.current;
     const stagger = p.stagger ?? 0;
     let delay = 0;
 
+    const _na = natalActivationsRef.current;
+    const _nb = natalActivationsBRef.current;
     for (const sign of KEYBOARD_ORDER) {
-      const inA = !!natalActivations[sign];
-      const inB = !!natalActivationsB[sign];
+      const inA = !!_na[sign];
+      const inB = !!_nb[sign];
       if (!inA && !inB) continue;
 
       const cfg = SIGN_CHARACTER[sign];
@@ -2087,11 +2247,11 @@ export default function App() {
       const now = Tone.now() + delay;
 
       if (inA && !activeSignsARef.current.has(sign)) {
-        if (natalActivations[sign]) eng.synths[sign].set({ detune: natalActivations[sign].detuneCents });
+        if (_na[sign]) eng.synths[sign].set({ detune: _na[sign].detuneCents });
         eng.synths[sign].triggerAttack(note, now, cfg.vel);
-        const pal = SIGN_COLORS[sign];
         const ci = colorIndexRef.current[sign] || 0;
         colorIndexRef.current[sign] = (ci + 1) % 4;
+        const _hadVsA = !!visualStateRef.current[sign];
         visualStateRef.current[sign] = {
           stage: "attack", startTime: performance.now() + delay * 1000,
           envelopeLevel: 0,
@@ -2100,14 +2260,19 @@ export default function App() {
           sustainLevel: Math.min(1, sustain * cfg.sustainMul),
           releaseTime: release * cfg.releaseMul * VIS_SPEED,
           releaseStartLevel: 0,
-          activeColor: pal ? hexToRgb(pal[ci]) : [144, 112, 204],
+          activeColor: _SIGN_RGB[sign]?.[ci] ?? _DEFAULT_COLOR,
         };
+        if (!_hadVsA) _VS_ACTIVE[_vsActiveCount++] = sign;
       }
 
       if (inB && !activeSignsBRef.current.has(sign)) {
-        if (natalActivationsB[sign]) eng.synthsB[sign].set({ detune: natalActivationsB[sign].detuneCents });
+        if (_nb[sign]) eng.synthsB[sign].set({ detune: _nb[sign].detuneCents });
         eng.synthsB[sign].triggerAttack(note, now, cfg.vel);
-        visualStateRef.current[`${sign}_B`] = {
+        const ciB = colorIndexRef.current[`${sign}_B`] || 0;
+        colorIndexRef.current[`${sign}_B`] = (ciB + 1) % 4;
+        const _bKey = `${sign}_B`;
+        const _hadVsB = !!visualStateRef.current[_bKey];
+        visualStateRef.current[_bKey] = {
           stage: "attack", startTime: performance.now() + delay * 1000,
           envelopeLevel: 0,
           attackTime: attack * cfg.attackMul * VIS_SPEED,
@@ -2115,28 +2280,25 @@ export default function App() {
           sustainLevel: Math.min(1, sustain * cfg.sustainMul),
           releaseTime: release * cfg.releaseMul * VIS_SPEED,
           releaseStartLevel: 0,
-          activeColor: hexToRgb(CHART_B_COLOR),
+          activeColor: _SIGN_RGB[sign]?.[ciB] ?? _DEFAULT_COLOR,
         };
+        if (!_hadVsB) _VS_ACTIVE[_vsActiveCount++] = _bKey;
       }
 
       delay += stagger;
     }
 
-    // Bulk-set active signs after scheduling (use refs for current state)
-    const newA = new Set(activeSignsARef.current);
-    const newB = new Set(activeSignsBRef.current);
+    // Bulk-set active signs after scheduling, update DOM imperatively
     for (const sign of KEYBOARD_ORDER) {
-      if (natalActivations[sign]) newA.add(sign);
-      if (natalActivationsB[sign]) newB.add(sign);
+      if (_na[sign]) activeSignsARef.current.add(sign);
+      if (_nb[sign]) activeSignsBRef.current.add(sign);
+      updateKeyActive(sign);
     }
-    activeSignsARef.current = newA;
-    activeSignsBRef.current = newB;
-    setActiveSigns(newA);
-    setActiveSignsB(newB);
-    applyAdaptiveVoicing(eng, newA.size + newB.size);
+    applyAdaptiveVoicing(eng, activeSignsARef.current.size + activeSignsBRef.current.size);
     if (startLoopRef.current) startLoopRef.current();
+    setAnyActive(true);
     setStatus("playing");
-  }, [ensureEngine, natalActivations, natalActivationsB]);
+  }, [ensureEngine, updateKeyActive]);
 
   const toggleShadow = useCallback(async () => {
     const eng = await ensureEngine();
@@ -2417,8 +2579,11 @@ export default function App() {
       if (natalDate) {
         const result = await computeChart(natalDate, natalTime, natalLat, natalLng);
         if (gen !== natalGenARef.current) return;
-        setNatalActivations(result ? result.activations : {});
+        const na = result ? result.activations : {};
+        natalActivationsRef.current = na;
+        setNatalActivations(na);
       } else {
+        natalActivationsRef.current = {};
         setNatalActivations({});
       }
     }, 300);
@@ -2432,8 +2597,11 @@ export default function App() {
       if (natalDateB) {
         const result = await computeChart(natalDateB, natalTimeB, natalLatB, natalLngB);
         if (gen !== natalGenBRef.current) return;
-        setNatalActivationsB(result ? result.activations : {});
+        const nb = result ? result.activations : {};
+        natalActivationsBRef.current = nb;
+        setNatalActivationsB(nb);
       } else {
+        natalActivationsBRef.current = {};
         setNatalActivationsB({});
       }
     }, 300);
@@ -2448,78 +2616,12 @@ export default function App() {
         ref={rootRef}
       >
         <canvas className="cel-emanation" ref={emanationRef} />
-        <div className="cel-keyboard" onClick={handleKeyboardClick}>
-          {NATURAL_KEYS.map(
-            (sign) => {
-              const cfg = SIGNS[sign];
-              const activeA = activeSigns.has(sign);
-              const activeB = activeSignsB.has(sign);
-              const hasChartA = natalActivations[sign];
-              const hasChartB = natalActivationsB[sign];
-              return (
-                <button
-                  key={sign}
-                  type="button"
-                  ref={(el) => {
-                    keyRefsRef.current[sign] = el;
-                  }}
-                  className={`cel-key cel-key-natural${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
-                  data-sign={sign}
-                >
-                  {(hasChartA || hasChartB) && (
-                    <span className="cel-chart-dots">
-                      {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
-                      {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
-                    </span>
-                  )}
-                  <span className="cel-key-glyph">{cfg.glyph}</span>
-                  <span className="cel-key-name">{sign}</span>
-                  {(hasChartA || hasChartB) && (
-                    <span className="cel-key-bodies">
-                      {hasChartA && hasChartA.planets.map(p => (
-                        <span key={`a-${p}`} className="cel-body-glyph cel-body-a">{BODY_GLYPHS[p] || p[0]}</span>
-                      ))}
-                      {hasChartB && hasChartB.planets.map(p => (
-                        <span key={`b-${p}`} className="cel-body-glyph cel-body-b">{BODY_GLYPHS[p] || p[0]}</span>
-                      ))}
-                    </span>
-                  )}
-                  <span className="cel-key-note">{cfg.note}</span>
-                </button>
-              );
-            },
-          )}
-          {SHARP_KEYS.map(
-            (sign, i) => {
-              const cfg = SIGNS[sign];
-              const activeA = activeSigns.has(sign);
-              const activeB = activeSignsB.has(sign);
-              const hasChartA = natalActivations[sign];
-              const hasChartB = natalActivationsB[sign];
-              return (
-                <button
-                  key={sign}
-                  type="button"
-                  ref={(el) => {
-                    keyRefsRef.current[sign] = el;
-                  }}
-                  className={`cel-key cel-key-sharp${activeA ? " cel-key-active-a" : ""}${activeB ? " cel-key-active-b" : ""}${activeA || activeB ? " cel-key-active" : ""}${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
-                  style={SHARP_KEY_STYLES[i]}
-                  data-sign={sign}
-                >
-                  {(hasChartA || hasChartB) && (
-                    <span className="cel-chart-dots">
-                      {hasChartA && <span className="cel-chart-dot cel-chart-dot-a" />}
-                      {hasChartB && <span className="cel-chart-dot cel-chart-dot-b" />}
-                    </span>
-                  )}
-                  <span className="cel-key-glyph">{cfg.glyph}</span>
-                  <span className="cel-key-name">{sign}</span>
-                </button>
-              );
-            },
-          )}
-        </div>
+        <KeyboardSection
+          natalActivations={natalActivations}
+          natalActivationsB={natalActivationsB}
+          onClick={handleKeyboardClick}
+          keyRefCallbacks={keyRefCallbacks}
+        />
 
 
         <div className="cel-natal cel-natal-dual">
@@ -2625,86 +2727,78 @@ export default function App() {
             </div>
           </div>
 
-          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (
+          {infoPanelSigns.hasAny && (
             <div className="cel-playback-controls">
               <button
                 type="button"
                 className="cel-btn cel-natal-play"
-                onClick={activeSigns.size > 0 || activeSignsB.size > 0 ? stopAll : playAll}
+                onClick={anyActive ? stopAll : playAll}
               >
-                {activeSigns.size > 0 || activeSignsB.size > 0 ? "Pause" : "Play"}
+                {anyActive ? "Pause" : "Play"}
               </button>
             </div>
           )}
 
           {/* Info panel — shared signs first, then unique per chart */}
-          {(Object.keys(natalActivations).length > 0 || Object.keys(natalActivationsB).length > 0) && (() => {
-  const keysA = Object.keys(natalActivations);
-  const keysB = Object.keys(natalActivationsB);
-  const shared = keysA.filter(s => keysB.includes(s));
-  const onlyA = keysA.filter(s => !keysB.includes(s));
-  const onlyB = keysB.filter(s => !keysA.includes(s));
-  const hasBoth = keysA.length > 0 && keysB.length > 0;
-  return (
-  <div className="cel-natal-info-panel">
-    {hasBoth && (
-      <p className="cel-natal-context">
-        Two birth charts compared. Shared signs play both voices together.
-      </p>
-    )}
-    {shared.length > 0 && (
-      <div className="cel-natal-info-section">
-        <div className="cel-natal-section-header cel-natal-shared-header">
-          {shared.length} shared {shared.length === 1 ? "sign" : "signs"}
-        </div>
-        <div className="cel-natal-grid">
-          {shared.map(sign => (
-            <span key={sign} className="cel-natal-item cel-natal-shared">
-              {SIGNS[sign].glyph} {sign}:
-              <span style={STYLE_CHART_A}> {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
-              {" · "}
-              <span style={STYLE_CHART_B}>{natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-    )}
-    {onlyA.length > 0 && (
-      <div className="cel-natal-info-section">
-        <div className="cel-natal-section-header" style={STYLE_CHART_A}>
-          Chart A{natalDate ? ` — ${natalDate}` : ""}{onlyA.length < keysA.length ? ` (${onlyA.length} unique)` : ""}
-        </div>
-        <div className="cel-natal-grid">
-          {onlyA.map(sign => (
-            <span key={sign} className="cel-natal-item">
-              {SIGNS[sign].glyph} {sign}: {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
-            </span>
-          ))}
-        </div>
-      </div>
-    )}
-    {onlyB.length > 0 && (
-      <div className="cel-natal-info-section">
-        <div className="cel-natal-section-header" style={STYLE_CHART_B}>
-          Chart B{natalDateB ? ` — ${natalDateB}` : ""}{onlyB.length < keysB.length ? ` (${onlyB.length} unique)` : ""}
-        </div>
-        <div className="cel-natal-grid">
-          {onlyB.map(sign => (
-            <span key={sign} className="cel-natal-item">
-              {SIGNS[sign].glyph} {sign}: {natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
-            </span>
-          ))}
-        </div>
-      </div>
-    )}
-    <div className="cel-natal-legend">
-      {Object.entries(BODY_GLYPHS).map(([name, glyph]) => (
-        <span key={name} className="cel-legend-item">{glyph} {name}</span>
-      ))}
-    </div>
-  </div>
-  );
-})()}
+          {infoPanelSigns.hasAny && (
+          <div className="cel-natal-info-panel">
+            {infoPanelSigns.hasBoth && (
+              <p className="cel-natal-context">
+                Two birth charts compared. Shared signs play both voices together.
+              </p>
+            )}
+            {infoPanelSigns.shared.length > 0 && (
+              <div className="cel-natal-info-section">
+                <div className="cel-natal-section-header cel-natal-shared-header">
+                  {infoPanelSigns.shared.length} shared {infoPanelSigns.shared.length === 1 ? "sign" : "signs"}
+                </div>
+                <div className="cel-natal-grid">
+                  {infoPanelSigns.shared.map(sign => (
+                    <span key={sign} className="cel-natal-item cel-natal-shared">
+                      {SIGNS[sign].glyph} {sign}:
+                      <span style={STYLE_CHART_A}> {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
+                      {" · "}
+                      <span style={STYLE_CHART_B}>{natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {infoPanelSigns.onlyA.length > 0 && (
+              <div className="cel-natal-info-section">
+                <div className="cel-natal-section-header" style={STYLE_CHART_A}>
+                  Chart A{natalDate ? ` — ${natalDate}` : ""}{infoPanelSigns.onlyA.length < infoPanelSigns.keysA.length ? ` (${infoPanelSigns.onlyA.length} unique)` : ""}
+                </div>
+                <div className="cel-natal-grid">
+                  {infoPanelSigns.onlyA.map(sign => (
+                    <span key={sign} className="cel-natal-item">
+                      {SIGNS[sign].glyph} {sign}: {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {infoPanelSigns.onlyB.length > 0 && (
+              <div className="cel-natal-info-section">
+                <div className="cel-natal-section-header" style={STYLE_CHART_B}>
+                  Chart B{natalDateB ? ` — ${natalDateB}` : ""}{infoPanelSigns.onlyB.length < infoPanelSigns.keysB.length ? ` (${infoPanelSigns.onlyB.length} unique)` : ""}
+                </div>
+                <div className="cel-natal-grid">
+                  {infoPanelSigns.onlyB.map(sign => (
+                    <span key={sign} className="cel-natal-item">
+                      {SIGNS[sign].glyph} {sign}: {natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="cel-natal-legend">
+              {Object.entries(BODY_GLYPHS).map(([name, glyph]) => (
+                <span key={name} className="cel-legend-item">{glyph} {name}</span>
+              ))}
+            </div>
+          </div>
+          )}
         </div>
 
         <details className="cel-veil">
@@ -2944,6 +3038,7 @@ const CSS = `
     transition: background 0.15s ease, border-color 0.15s ease;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+    outline: none;
     padding-bottom: 0.6rem;
     position: relative;
     contain: layout style;
@@ -2997,22 +3092,22 @@ const CSS = `
     border-color: rgba(180, 140, 255, 0.45);
   }
 
-  .cel-key-active.cel-key-natural {
+  .cel-key-natural[data-active] {
     background: #221a3a;
     border-color: rgba(180, 140, 255, 0.55);
   }
 
-  .cel-key-active.cel-key-natural:hover {
+  .cel-key-natural[data-active]:hover {
     background: #2c2046;
     border-color: rgba(180, 140, 255, 0.65);
   }
 
-  .cel-key-active.cel-key-sharp {
+  .cel-key-sharp[data-active] {
     background: #4e288a;
     border-color: rgba(200, 160, 255, 0.6);
   }
 
-  .cel-key-active.cel-key-sharp:hover {
+  .cel-key-sharp[data-active]:hover {
     background: #6032a0;
     border-color: rgba(200, 160, 255, 0.7);
   }
@@ -3026,7 +3121,7 @@ const CSS = `
     font-size: 1rem;
   }
 
-  .cel-key-active .cel-key-glyph {
+  .cel-key[data-active] .cel-key-glyph {
     color: #e0c8ff;
     text-shadow: 0 0 10px rgba(200, 160, 255, 0.6);
   }
@@ -3050,7 +3145,7 @@ const CSS = `
     color: #8070a0;
   }
 
-  .cel-key-active .cel-key-note {
+  .cel-key[data-active] .cel-key-note {
     color: #b8a0d8;
   }
 
@@ -3565,30 +3660,16 @@ const CSS = `
   .cel-body-a { color: ${CHART_A_COLOR}; }
   .cel-body-b { color: ${CHART_B_COLOR}; }
 
-  /* ── A/B active key glow colors ─────────────────────── */
+  /* ── Shared key (both charts active) — amber accent ── */
 
-  .cel-key-active-a.cel-key-natural {
-    background: #221a3a;
-    border-color: rgba(212, 160, 60, 0.45);
+  .cel-key-natural[data-both] {
+    background: #2a2218;
+    border-color: rgba(212, 160, 60, 0.55);
   }
 
-  .cel-key-active-b.cel-key-natural {
-    background: #1a2a3a;
-    border-color: rgba(60, 168, 212, 0.45);
-  }
-
-  .cel-key-active-a.cel-key-active-b.cel-key-natural {
-    border-image: linear-gradient(135deg, ${CHART_A_COLOR}, ${CHART_B_COLOR}) 1;
-  }
-
-  .cel-key-active-a.cel-key-sharp {
+  .cel-key-sharp[data-both] {
     background: #3a2a10;
-    border-color: rgba(212, 160, 60, 0.5);
-  }
-
-  .cel-key-active-b.cel-key-sharp {
-    background: #102a3a;
-    border-color: rgba(60, 168, 212, 0.5);
+    border-color: rgba(212, 160, 60, 0.6);
   }
 
   /* ── Playback controls ───────────────────────────────── */
