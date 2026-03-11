@@ -1305,17 +1305,29 @@ export default function App() {
   const colorIndexRef = useRef({});
   const [natalDate, setNatalDate] = useState("1968-01-22");
   const [natalTime, setNatalTime] = useState("");
-  const [natalLat, setNatalLat] = useState("39.96");
-  const [natalLng, setNatalLng] = useState("-82.99");
+  const [natalLat, setNatalLat] = useState(39.96);
+  const [natalLng, setNatalLng] = useState(-82.99);
+  const [cityQueryA, setCityQueryA] = useState("Columbus, Ohio, US");
+  const [citySuggestionsA, setCitySuggestionsA] = useState([]);
+  const [cityLoadingA, setCityLoadingA] = useState(false);
+  const [cityHighlightA, setCityHighlightA] = useState(-1);
   const [natalActivations, setNatalActivations] = useState({});
   // Chart B state
   const [natalDateB, setNatalDateB] = useState("");
   const [natalTimeB, setNatalTimeB] = useState("");
-  const [natalLatB, setNatalLatB] = useState("39.96");
-  const [natalLngB, setNatalLngB] = useState("-82.99");
+  const [natalLatB, setNatalLatB] = useState(39.96);
+  const [natalLngB, setNatalLngB] = useState(-82.99);
+  const [cityQueryB, setCityQueryB] = useState("Columbus, Ohio, US");
+  const [citySuggestionsB, setCitySuggestionsB] = useState([]);
+  const [cityLoadingB, setCityLoadingB] = useState(false);
+  const [cityHighlightB, setCityHighlightB] = useState(-1);
   const [natalActivationsB, setNatalActivationsB] = useState({});
   const [activeSignsB, setActiveSignsB] = useState(new Set());
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const cityDebounceARef = useRef(null);
+  const cityDebounceBRef = useRef(null);
+  const cityGenARef = useRef(0);
+  const cityGenBRef = useRef(0);
   const initParams = () =>
     Object.fromEntries(
       Object.entries(KNOB_DEFS).map(([k, d]) => [k, d.default]),
@@ -2327,6 +2339,72 @@ export default function App() {
     return { activations, bodies, hasTime: !!time };
   }, []);
 
+  const fetchCitySuggestions = async (query) => {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`,
+      { headers: { Referer: "https://celezdial-selekta.app" } },
+    );
+    return res.json();
+  };
+
+  const selectCity = (result, setLat, setLng, setQuery, setSuggestions, setHighlight) => {
+    setLat(parseFloat(result.lat));
+    setLng(parseFloat(result.lon));
+    const parts = result.display_name.split(", ");
+    setQuery(parts.slice(0, 3).join(", "));
+    setSuggestions([]);
+    setHighlight(-1);
+  };
+
+  const handleCityKeyDown = (e, suggestions, highlight, setHighlight, onSelect) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => (h + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => (h <= 0 ? suggestions.length - 1 : h - 1));
+    } else if (e.key === "Enter" && highlight >= 0 && suggestions[highlight]) {
+      e.preventDefault();
+      onSelect(suggestions[highlight]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setCitySuggestionsA([]);
+      setCitySuggestionsB([]);
+    }
+  };
+
+  useEffect(() => {
+    clearTimeout(cityDebounceARef.current);
+    if (cityQueryA.length < 2) { setCitySuggestionsA([]); return; }
+    setCityLoadingA(true);
+    cityDebounceARef.current = setTimeout(async () => {
+      const gen = ++cityGenARef.current;
+      try {
+        const results = await fetchCitySuggestions(cityQueryA);
+        if (gen !== cityGenARef.current) return;
+        setCitySuggestionsA(results);
+      } catch { setCitySuggestionsA([]); }
+      if (gen === cityGenARef.current) setCityLoadingA(false);
+    }, 500);
+    return () => clearTimeout(cityDebounceARef.current);
+  }, [cityQueryA]);
+
+  useEffect(() => {
+    clearTimeout(cityDebounceBRef.current);
+    if (cityQueryB.length < 2) { setCitySuggestionsB([]); return; }
+    setCityLoadingB(true);
+    cityDebounceBRef.current = setTimeout(async () => {
+      const gen = ++cityGenBRef.current;
+      try {
+        const results = await fetchCitySuggestions(cityQueryB);
+        if (gen !== cityGenBRef.current) return;
+        setCitySuggestionsB(results);
+      } catch { setCitySuggestionsB([]); }
+      if (gen === cityGenBRef.current) setCityLoadingB(false);
+    }, 500);
+    return () => clearTimeout(cityDebounceBRef.current);
+  }, [cityQueryB]);
+
   useEffect(() => {
     clearTimeout(natalDebounceARef.current);
     natalDebounceARef.current = setTimeout(async () => {
@@ -2461,30 +2539,33 @@ export default function App() {
                   onChange={(e) => setNatalTime(e.target.value)}
                 />
               </label>
-              <label
-                className={`cel-natal-field${natalLat ? " has-value" : ""}`}
-              >
-                <span>Latitude</span>
-                <input
-                  type="number"
-                  className="cel-natal-input"
-                  value={natalLat}
-                  onChange={(e) => setNatalLat(e.target.value)}
-                  step="0.01"
-                />
-              </label>
-              <label
-                className={`cel-natal-field${natalLng ? " has-value" : ""}`}
-              >
-                <span>Longitude</span>
-                <input
-                  type="number"
-                  className="cel-natal-input"
-                  value={natalLng}
-                  onChange={(e) => setNatalLng(e.target.value)}
-                  step="0.01"
-                />
-              </label>
+              <div className="cel-natal-city-wrap">
+                <label className={`cel-natal-field${cityQueryA ? " has-value" : ""}`}>
+                  <span>Birth city</span>
+                  <input
+                    type="text"
+                    className="cel-natal-input"
+                    autoComplete="off"
+                    value={cityQueryA}
+                    onChange={(e) => { setCityQueryA(e.target.value); setCityHighlightA(-1); }}
+                    onBlur={() => setTimeout(() => setCitySuggestionsA([]), 150)}
+                    onKeyDown={(e) => handleCityKeyDown(e, citySuggestionsA, cityHighlightA, setCityHighlightA,
+                      (r) => selectCity(r, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA))}
+                  />
+                  {cityLoadingA && <span className="cel-city-spinner">…</span>}
+                </label>
+                {citySuggestionsA.length > 0 && (
+                  <ul className="cel-city-dropdown" role="listbox">
+                    {citySuggestionsA.map((s, i) => (
+                      <li key={s.place_id} role="option" aria-selected={i === cityHighlightA}
+                        className={`cel-city-option${i === cityHighlightA ? " highlighted" : ""}`}
+                        onMouseDown={() => selectCity(s, setNatalLat, setNatalLng, setCityQueryA, setCitySuggestionsA, setCityHighlightA)}>
+                        {s.display_name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2509,30 +2590,33 @@ export default function App() {
                   onChange={(e) => setNatalTimeB(e.target.value)}
                 />
               </label>
-              <label
-                className={`cel-natal-field${natalLatB ? " has-value" : ""}`}
-              >
-                <span>Latitude</span>
-                <input
-                  type="number"
-                  className="cel-natal-input"
-                  value={natalLatB}
-                  onChange={(e) => setNatalLatB(e.target.value)}
-                  step="0.01"
-                />
-              </label>
-              <label
-                className={`cel-natal-field${natalLngB ? " has-value" : ""}`}
-              >
-                <span>Longitude</span>
-                <input
-                  type="number"
-                  className="cel-natal-input"
-                  value={natalLngB}
-                  onChange={(e) => setNatalLngB(e.target.value)}
-                  step="0.01"
-                />
-              </label>
+              <div className="cel-natal-city-wrap">
+                <label className={`cel-natal-field${cityQueryB ? " has-value" : ""}`}>
+                  <span>Birth city</span>
+                  <input
+                    type="text"
+                    className="cel-natal-input"
+                    autoComplete="off"
+                    value={cityQueryB}
+                    onChange={(e) => { setCityQueryB(e.target.value); setCityHighlightB(-1); }}
+                    onBlur={() => setTimeout(() => setCitySuggestionsB([]), 150)}
+                    onKeyDown={(e) => handleCityKeyDown(e, citySuggestionsB, cityHighlightB, setCityHighlightB,
+                      (r) => selectCity(r, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB))}
+                  />
+                  {cityLoadingB && <span className="cel-city-spinner">…</span>}
+                </label>
+                {citySuggestionsB.length > 0 && (
+                  <ul className="cel-city-dropdown" role="listbox">
+                    {citySuggestionsB.map((s, i) => (
+                      <li key={s.place_id} role="option" aria-selected={i === cityHighlightB}
+                        className={`cel-city-option${i === cityHighlightB ? " highlighted" : ""}`}
+                        onMouseDown={() => selectCity(s, setNatalLatB, setNatalLngB, setCityQueryB, setCitySuggestionsB, setCityHighlightB)}>
+                        {s.display_name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
 
@@ -3298,9 +3382,48 @@ const CSS = `
     font-size: 0.5rem;
     color: #807098;
   }
-  .cel-natal-input[type="number"]::-webkit-inner-spin-button,
-  .cel-natal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .cel-natal-input[type="number"] { -moz-appearance: textfield; }
+  .cel-natal-city-wrap {
+    grid-column: 1 / -1;
+    position: relative;
+  }
+  .cel-city-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    background: rgba(20, 16, 32, 0.96);
+    border: 1px solid rgba(180, 140, 255, 0.2);
+    border-radius: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .cel-city-option {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.75rem;
+    color: #c0b8d4;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cel-city-option:hover,
+  .cel-city-option.highlighted {
+    background: rgba(180, 140, 255, 0.12);
+    color: #e8e0f8;
+  }
+  .cel-city-spinner {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #605878;
+    font-size: 0.8rem;
+    pointer-events: none;
+  }
 
   .cel-natal-play {
     width: 100%;
