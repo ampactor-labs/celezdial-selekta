@@ -1435,6 +1435,8 @@ export default function App() {
   const renderThrottleRef = useRef(0);
   const trailingRenderRef = useRef(null);
   const gradientCacheRef = useRef({});
+  const canvasScaleRef = useRef(1);
+  const keyExtentRef = useRef(60);
   const paramsRef = useRef({ ..._INIT_PARAMS });
   const natalDebounceARef = useRef(null);
   const natalDebounceBRef = useRef(null);
@@ -1642,6 +1644,7 @@ export default function App() {
       if (!rootEl) return;
       const rr = rootEl.getBoundingClientRect();
       const positions = {};
+      let maxKeyExtent = 0;
       for (const sign of KEYBOARD_ORDER) {
         const el = keyRefsRef.current[sign];
         if (el) {
@@ -1650,14 +1653,23 @@ export default function App() {
             cx: kr.left + kr.width / 2 - rr.left,
             cy: kr.top + kr.height / 2 - rr.top,
           };
+          const extent = Math.max(kr.width, kr.height);
+          if (extent > maxKeyExtent) maxKeyExtent = extent;
         }
       }
       keyPositionsRef.current = positions;
-      // Size canvas to match root + cache 2d context
+      keyExtentRef.current = maxKeyExtent || 60;
+      // Size canvas + cache 2d context.
+      // Glow is extremely tolerant of downscale — cap intrinsic resolution at
+      // 1200px in either dimension to keep radial-gradient rasterization within
+      // GPU sanity on large desktop displays (prevents compositor lockup).
       const canvas = emanationRef.current;
       if (canvas) {
-        canvas.width = rr.width;
-        canvas.height = rr.height;
+        const MAX_CANVAS_DIM = 1200;
+        const scale = Math.min(1, MAX_CANVAS_DIM / rr.width, MAX_CANVAS_DIM / rr.height) || 1;
+        canvas.width = Math.max(1, Math.round(rr.width * scale));
+        canvas.height = Math.max(1, Math.round(rr.height * scale));
+        canvasScaleRef.current = scale;
         canvasCtxRef.current = canvas.getContext("2d");
         gradientCacheRef.current = {};
       }
@@ -1815,7 +1827,7 @@ export default function App() {
           _gd.g = g;
           _gd.b = b;
           _gd.alpha = level * 0.38;
-          _gd.falloff = _shadow ? 95 : 78;
+          _gd.falloff = _shadow ? 50 : 40;
         }
 
         if (level > 0.01) {
@@ -1873,13 +1885,24 @@ export default function App() {
       const canvas = emanationRef.current;
       const ctx = canvasCtxRef.current;
       if (canvas && ctx && _canvasDirty) {
+        const cs = canvasScaleRef.current;
+        // Identity transform for clear (physical pixels), then scale so the
+        // rest of the draw code stays in root CSS-pixel coordinates.
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (cs !== 1) ctx.setTransform(cs, 0, 0, cs, 0, 0);
         if (_gradCount > 0) {
-          const canvasH = canvas.height;
+          // Logical (root) height — canvas.height is physical after scale clamp.
+          const canvasH = canvas.height / cs;
+          // Cap radius at 3× the largest key extent. Prevents gradients from
+          // ballooning to cover the whole viewport on desktop, where per-pixel
+          // radial-gradient rasterization becomes a GPU bottleneck.
+          const maxRadius = (keyExtentRef.current * 3) | 0;
           const _cache = gradientCacheRef.current;
           for (let i = 0; i < _gradCount; i++) {
             const gd = _GRAD_POOL[i];
-            const radius = ((canvasH * gd.falloff) / 100) | 0;
+            let radius = ((canvasH * gd.falloff) / 100) | 0;
+            if (radius > maxRadius) radius = maxRadius;
             const cx = gd.cx | 0, cy = gd.cy | 0;
             let entry = _cache[gd.sign];
             if (
