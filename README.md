@@ -1,6 +1,6 @@
 # Celezdial Selekta
 
-Polyphonic ambient synthesizer mapped to the zodiac. 12 voices toggle on a chromatic keyboard (C to B), shaped by a wall of parameter knobs across 8 swappable FX chains (there's no GUI for swapping chains yet). Built with React and Tone.js.
+Polyphonic ambient synthesizer mapped to the zodiac. 12 voices toggle on a chromatic keyboard (C to B), shaped by a wall of parameter knobs across 8 FX chains you can swap live from the controls veil. Birth charts select the voices, aspects color them, and orbit mode breathes them on planetary periods. Built with React and Tone.js.
 
 ## Signal Chain (Zodiac, the active default)
 
@@ -146,9 +146,9 @@ Eight pre-wired chains: the same nodes in a different order, for a different cha
 
 ## Controls
 
-**Keyboard**: 12 zodiac keys, click to toggle voices on and off. Chromatic layout, C through B.
+**Keyboard**: 12 zodiac keys, click to toggle voices on and off. Chromatic layout, C through B. The QWERTY row `awsedftgyhuj` mirrors the keys piano-style (a=C, w=Db, s=D ... j=B) — the hint letter sits on each key.
 
-**Knobs**: drag vertically. Shift-drag for fine control. Double-click to reset.
+**Knobs**: drag vertically. Shift-drag for fine control. Double-click to reset. Focused knobs answer arrow keys (shift for fine steps) and the scroll wheel.
 
 | Group | Knobs |
 |-------|-------|
@@ -172,11 +172,21 @@ Eight pre-wired chains: the same nodes in a different order, for a different cha
 
 **Look Within**: a dot pyramid, always visible. Clicking it opens the Controls veil, where Eclipse, Breathe, the knobs, listen presets, randomize, and snapshot export all live. Discoverable, not advertised.
 
+**Chains**: a pill row in the veil switches between the eight FX chains live. The engine rewires its graph behind a short fade — same nodes, different order, different instrument.
+
 **Listen**: monitor EQ presets for headphones, laptop speakers, phone, or loudspeakers. It auto-detects the device type on load via `matchMedia` (phone vs laptop vs headphones default).
+
+**MIDI**: a pill that cycles through your MIDI outputs (Chrome and friends; it hides where Web MIDI is missing). Chart A's voices go out on channels 1 to 12, one channel per sign, with the natal detune riding each channel's pitch bend. Plug in hardware and the chart plays your rig.
 
 **Randomize**: throws the knobs.
 
-**Snapshot**: Save downloads a `.json` file with the full sound state (all knob values, active signs, chain, osc type, listen preset, eclipse state). Copy puts the same JSON on the clipboard. It's enough to recreate the sound in another Tone.js project.
+**Record**: taps the chain tail — the exact signal the speakers get — and downloads a `.webm` when you stop.
+
+**Perform**: fullscreen, keyboard and emanation only. Inputs, knobs, and footer step aside; ✕ or Esc exits. Made for projectors.
+
+**Snapshot**: Save downloads a `.json` file with the full sound state (all knob values, both banks' active signs, chain, osc type, listen preset, eclipse, orbit, and both charts' birth inputs). Copy puts the same JSON on the clipboard, Load restores one. It's enough to recreate the sound in another Tone.js project.
+
+**Link**: copies a URL carrying that same state in the fragment. Fragments never leave the browser, so birth data stays off the network. Opening a link restores everything silently; Play is the first sound. A QR code of a link turns a room of phones into the instrument.
 
 ## Natal Chart
 
@@ -198,6 +208,26 @@ Partial data is fine:
 
 Manual key exploration is always available. Toggling keys doesn't interfere with the chart voices.
 
+## Transits
+
+Each chart header has a **now** button that fills the current date and time — the sky overhead as a chart. Birth chart in A, now in B, and the comparison machinery does the rest: shared signs glow, cross-chart aspects list and sound. Planetary positions barely depend on location, so there's no geolocation prompt; add a city if you want the Ascendant. The sky moves, so tomorrow's drone is different.
+
+## Aspects
+
+The chart's angular relationships play. Within each chart the library computes the majors — conjunction ☌, opposition ☍, trine △, square □, sextile ⚹. Across two charts the app computes synastry aspects from ecliptic longitudes directly, with tighter orbs (6° conjunction and opposition, 5° trine and square, 4° sextile). Both kinds appear in the info panel.
+
+They also change the sound:
+
+- Trines and sextiles lift the involved signs' velocities (+3% each, capped at +10%)
+- Conjunctions focus them (+4%)
+- Squares and oppositions detune: when both voices of a tense pair sound, the later arrival shifts 4¢ off its natal tuning, and the beating carries the tension through the Chebyshev intermodulation
+
+The numbers live in `tuning.js` under the `aspect*` keys and vary per preset — Harmonic Furnace pushes 7¢ of tension, Glass Meridian just 3¢.
+
+## Orbit
+
+Orbit stops sustaining and breathes. Each chart-active voice swells and releases on a cycle derived from its ruling planet's orbital period, log-mapped into human time: Moon-ruled Cancer cycles every 16 seconds, Saturn-ruled Capricorn and Aquarius every 88 (`orbitPeriodMin`/`orbitPeriodMax`). Phases spread on the golden ratio so the voices never line up, and the whole thing phases like a slow ensemble. It's the Cousto move applied to rhythm instead of pitch. Leave it on.
+
 ## Setup
 
 ```bash
@@ -207,6 +237,6 @@ npm run dev
 
 ## Tuning
 
-All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for tuning.js.
+All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER, ASPECTS, PLANET_ORBIT_DAYS. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for tuning.js.
 
-The engine, UI, and visuals all live in `src/App.jsx`.
+The code splits along its seams: the audio graph in `src/engine.js`, chart math in `src/astro.js`, sign data in `src/signs.js`, snapshot and share-link codec in `src/snapshot.js`, MIDI out in `src/midi.js`. The React component and the visual system stay in `src/App.jsx`.
