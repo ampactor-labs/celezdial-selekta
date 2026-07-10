@@ -1,58 +1,16 @@
 // ═══════════════════════════════════════════════════════════════
-// CELESTIAL PAD v13 — Per-Sign Character · Adaptive Voicing
+// CELESTIAL PAD v14 — Aspects · Orbit · Chains · Share
 //
-// ─── ARCHITECTURE OVERVIEW ──────────────────────────────────
-//
-// 12 Tone.PolySynth instances (2-voice polyphony each), one per
-// zodiac sign. Each sign's oscillator type is determined by its
-// ruling planet via PLANETARY_CHARACTER (fat/AM/FM variants).
-// SIGN_CHARACTER merges SIGNS + PLANETARY_CHARACTER at init:
-//   PolySynth (per-sign oscType, multiplied ADSR envelope)
-//     → Panner (fixed stereo base + LFO drift per pan group)
-//       → sumBus (Gain node — all voices merge here)
-//
-// The sumBus feeds a serial FX chain ending at destination.
-// Voices summing BEFORE saturation is intentional — Chebyshev
-// waveshaping on a polyphonic sum creates intermodulation
-// distortion (sum/difference tones between partials). This is
-// what gives the pad its FM-like shimmer and harmonic density.
-//
-// ─── PLANETARY CHARACTER ──────────────────────────────────
-//
-// Each sign inherits its ruling planet's sonic personality:
-//   oscType     — fat (count/spread), AM, or FM variant
-//   ADSR muls   — orbital speed ↔ envelope speed
-//
-// 5 fat-type signs (Leo, Aries, Scorpio, Taurus, Libra) support
-// oscCount/spread and Eclipse spread ramp. 3 AM signs (Cancer,
-// Sagittarius, Pisces) and 4 FM signs (Gemini, Virgo, Capricorn,
-// Aquarius) skip spread — they drift via detune only.
-//
-// Envelope knobs set a base value; each sign applies its planetary
-// multiplier. Mars signs attack in ~60% of base time, Saturn in
-// ~150%. Inner-planet voices arrive first — orbital speed = sonic.
-//
-// ─── FX CHAIN (configurable — see tuning.js CHAINS) ──────
-//
-// Active default: "Zodiac"
-//   sumBus → Vibrato → Echo(CrossFade) → EQ3 → Chebyshev
-//     → [Distortion] → Freeverb → Chorus → [Phaser]
-//     → MonitorEQ → tanh soft clip → destination
-//
-// ─── ADAPTIVE VOICING ─────────────────────────────────────
-//
-// Polyphonic gain compensation: boost = 5 × log10(12 / active).
-// 12 voices = 0dB, 6 = +1.5dB, 3 = +3dB, 1 = +5.4dB.
-// Applied in toggleSign (before triggerAttack) and breathe.
-// Stacks with OCTAVE_GAIN (Fletcher-Munson).
-// NOT applied in randomize (chaotic by design).
+// UI + visuals live here. The audio graph is src/engine.js, chart
+// math is src/astro.js, sign data is src/signs.js, state codec is
+// src/snapshot.js. All sound-shaping numbers stay in src/tuning.js.
 //
 // ─── STATE MODEL ────────────────────────────────────────────
 //
 // engineRef      — Tone.js audio graph, created on first interaction.
 //                  Null until user clicks (browser autoplay policy).
 // activeSigns    — Set<string> of currently sounding sign names.
-// params         — Object of 35 direct knob values. Each knob maps
+// params         — Object of 39 direct knob values. Each knob maps
 //                  1:1 to an engine parameter via KNOB_MAP. Shadow
 //                  mode temporarily overrides FX params; when Shadow
 //                  disengages, param values are restored.
@@ -61,27 +19,24 @@
 //                  null → 0. When 0–7, all synths share that OSC_TYPES entry.
 // shadow         — Boolean. Shadow/Eclipse mode active. Ramps FX
 //                  params toward chaos targets over rampTime seconds.
+// activeChain    — CHAINS key; pills in the veil rewire at runtime.
+// orbit          — Boolean. Chart voices cycle on planetary periods
+//                  instead of sustaining.
+// perform        — Boolean. Fullscreen, keyboard + emanation only.
+// aspectMods     — Per-bank per-sign velocity boosts and tension
+//                  partners derived from chart + synastry aspects.
 //
 // ─── CONTROLS ───────────────────────────────────────────────
 //
-// Piano keyboard — Toggle individual planet voices on/off.
-// Eclipse        — Chaos mode. Ramps all FX toward extreme values,
-//                  widens osc spread (fat types only), randomizes
-//                  detune. Toggle off restores saved param values.
-// Breathe        — Cycles oscillator type: fatsine → amsine → ... →
-//                  fatsquare → per-sign → fatsine. Releases active
-//                  voices first, then switches. On per-sign, each sign
-//                  uses its planetary default.
-// Oracle dots    — Pyramid of dots below controls row. Clicking
-//                  opens the Controls veil (knobs, listen, randomize).
-//                  Discoverable, not advertised.
-// Listen pills   — Monitor EQ presets for different playback devices.
-// Knobs          — 35 direct SVG arc knobs, grouped by function.
-//                  Each maps 1:1 to an engine parameter. Double-click
-//                  resets to default. Shift+drag for fine control.
-//                  Envelope knobs apply per-sign multipliers.
-// Natal Chart    — Enter birth data, indicators appear reactively.
-//                  Click keys to play.
+// Piano keyboard — Toggle voices on/off. QWERTY row awsedftgyhuj
+//                  mirrors the 12 keys; knobs answer arrow keys and
+//                  the wheel when focused.
+// Eclipse        — Chaos mode. Ramps all FX toward extreme values.
+// Breathe        — Cycles oscillator type, per-sign → uniform types.
+// Oracle dots    — Opens the Controls veil (knobs, chains, listen,
+//                  randomize, save/copy/load/link, record, perform).
+// Natal charts   — Two charts; "now" fills the current sky (transits).
+//                  Aspects color the voices; Orbit breathes them.
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -92,14 +47,6 @@ import React, {
   useEffect,
   useMemo,
 } from "react";
-let Tone = null;
-let _horoscopeModule = null;
-async function getHoroscope() {
-  if (!_horoscopeModule) {
-    _horoscopeModule = await import("circular-natal-horoscope-js");
-  }
-  return _horoscopeModule;
-}
 import {
   TUNING,
   SHADOW,
@@ -109,13 +56,45 @@ import {
   ACTIVE_CHAIN,
   LISTEN_PRESETS,
   OSC_TYPES,
-  OCTAVE_GAIN,
-  PLANETARY_CHARACTER,
   SIGN_RULERS,
+  ASPECTS,
   CHART_A_COLOR,
   CHART_B_COLOR,
   BODY_GLYPHS,
 } from "./tuning";
+import {
+  SIGNS,
+  SIGN_CHARACTER,
+  SIGN_COLORS,
+  COLOR_OFF,
+  KNOB_DEFAULT_COLOR,
+  KEYBOARD_ORDER,
+  NATURAL_KEYS,
+  SHARP_KEYS,
+  SHARP_POSITIONS,
+  SIGN_NAMES,
+  KEY_TO_SIGN,
+  SIGN_TO_KEY,
+} from "./signs";
+import {
+  Tone,
+  createEngine,
+  KNOB_MAP,
+  applyAdaptiveVoicing,
+} from "./engine";
+import {
+  computeChart,
+  computeSynastryAspects,
+  aspectVoiceMods,
+  orbitPeriodSeconds,
+} from "./astro";
+import {
+  buildSnapshot,
+  parseSnapshot,
+  encodeShareState,
+  shareStateFromHash,
+} from "./snapshot";
+import { MidiOut, midiSupported } from "./midi";
 import {
   hexToRgb,
   rgbToHex,
@@ -139,204 +118,15 @@ const FONTS = {
   mono: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
 };
 
-// 12 zodiac signs — chromatic mapping C through B.
-// Each carries: note class, microtonal detune from 12-TET (cents),
-// octave, velocity (mix weight), glyph, fixed stereo base,
-// pan group, osc count, osc spread.
-// Octave spread: dim7 partitioning — C/Eb/Gb/A in oct 3, D/F/Ab/B in oct 4,
-// Db/E/G/Bb in oct 5. No semitone adjacencies within any octave.
-// Velocity: luminary-ruled signs (Leo/Cancer) lead, personal planet signs mid,
-// social planet signs (Jupiter/Saturn) form the harmonic bed.
-// Detune: Cousto planetary frequencies at 50% strength — authentic color
-// without quarter-tone shock. Signs sharing a ruler share the same offset.
-const SIGNS = {
-  Aquarius: {
-    octave: 3,
-    vel: 0.33,
-    glyph: "\u2652\uFE0E",
-    note: "C",
-    detuneCents: 6, // Saturn ×0.5
-    panBase: -0.7,
-    panGroup: "A",
-    oscCount: 2,
-    oscSpread: 5,
-  },
-  Pisces: {
-    octave: 5,
-    vel: 0.38,
-    glyph: "\u2653\uFE0E",
-    note: "Db",
-    detuneCents: -6.5, // Jupiter ×0.5
-    panBase: 0.65,
-    panGroup: "D",
-    oscCount: 3,
-    oscSpread: 12,
-  },
-  Aries: {
-    octave: 4,
-    vel: 0.52,
-    glyph: "\u2648\uFE0E",
-    note: "D",
-    detuneCents: -12.5, // Mars ×0.5
-    panBase: -0.4,
-    panGroup: "B",
-    oscCount: 2,
-    oscSpread: 8,
-  },
-  Taurus: {
-    octave: 3,
-    vel: 0.5,
-    glyph: "\u2649\uFE0E",
-    note: "Eb",
-    detuneCents: 5, // Venus ×0.5
-    panBase: 0.55,
-    panGroup: "C",
-    oscCount: 2,
-    oscSpread: 5,
-  },
-  Gemini: {
-    octave: 5,
-    vel: 0.48,
-    glyph: "\u264A\uFE0E",
-    note: "E",
-    detuneCents: 16.5, // Mercury ×0.5
-    panBase: -0.3,
-    panGroup: "B",
-    oscCount: 3,
-    oscSpread: 12,
-  },
-  Cancer: {
-    octave: 4,
-    vel: 0.6,
-    glyph: "\u264B\uFE0E",
-    note: "F",
-    detuneCents: 11.5, // Moon ×0.5
-    panBase: 0.7,
-    panGroup: "D",
-    oscCount: 2,
-    oscSpread: 8,
-  },
-  Leo: {
-    octave: 3,
-    vel: 0.65,
-    glyph: "\u264C\uFE0E",
-    note: "Gb",
-    detuneCents: 19, // Sun ×0.5
-    panBase: 0.1,
-    panGroup: "B",
-    oscCount: 2,
-    oscSpread: 5,
-  },
-  Virgo: {
-    octave: 5,
-    vel: 0.45,
-    glyph: "\u264D\uFE0E",
-    note: "G",
-    detuneCents: 16.5, // Mercury ×0.5
-    panBase: -0.6,
-    panGroup: "A",
-    oscCount: 3,
-    oscSpread: 12,
-  },
-  Libra: {
-    octave: 4,
-    vel: 0.47,
-    glyph: "\u264E\uFE0E",
-    note: "Ab",
-    detuneCents: 5, // Venus ×0.5
-    panBase: 0.35,
-    panGroup: "C",
-    oscCount: 2,
-    oscSpread: 8,
-  },
-  Scorpio: {
-    octave: 3,
-    vel: 0.48,
-    glyph: "\u264F\uFE0E",
-    note: "A",
-    detuneCents: -12.5, // Mars ×0.5
-    panBase: -0.2,
-    panGroup: "C",
-    oscCount: 2,
-    oscSpread: 5,
-  },
-  Sagittarius: {
-    octave: 5,
-    vel: 0.4,
-    glyph: "\u2650\uFE0E",
-    note: "Bb",
-    detuneCents: -6.5, // Jupiter ×0.5
-    panBase: 0.15,
-    panGroup: "D",
-    oscCount: 3,
-    oscSpread: 12,
-  },
-  Capricorn: {
-    octave: 4,
-    vel: 0.35,
-    glyph: "\u2651\uFE0E",
-    note: "B",
-    detuneCents: 6, // Saturn ×0.5
-    panBase: -0.55,
-    panGroup: "A",
-    oscCount: 2,
-    oscSpread: 8,
-  },
-};
-
-// Merge planetary character into sign config — all engine code reads from this.
-const SIGN_CHARACTER = Object.fromEntries(
-  Object.entries(SIGNS).map(([name, cfg]) => [
-    name,
-    { ...cfg, ...PLANETARY_CHARACTER[SIGN_RULERS[name]] },
-  ]),
-);
-
 const STYLE_CHART_A = { color: CHART_A_COLOR };
 const STYLE_CHART_B = { color: CHART_B_COLOR };
 
-// Adaptive voicing: boost gain when fewer voices are active.
-// Formula: 5 × log10(12 / totalActive) dB
-// totalActive = countA + countB across both synth banks.
-function applyAdaptiveVoicing(eng, totalActive) {
-  const boost =
-    totalActive > 0 ? 5 * Math.log10(12 / Math.max(1, totalActive)) : 0;
-  for (const name of SIGN_NAMES) {
-    const vol = -9 + (OCTAVE_GAIN[SIGN_CHARACTER[name].octave] || 0) + boost;
-    eng.synths[name].set({ volume: vol });
-    if (eng.synthsB) eng.synthsB[name].set({ volume: vol });
-  }
-}
-
-const SIGN_COLORS = {
-  Aquarius: ["#3f575a", "#688a8d", "#95bbbe", "#d0ecf0", "#0c0c0c"],
-  Pisces: ["#657ba5", "#7495bf", "#4e5d74", "#779ebf", "#0c0c0c"],
-  Aries: ["#dabd9d", "#8c5c4a", "#f27b5f", "#c26d5c", "#0c0c0c"],
-  Taurus: ["#878a8d", "#d9b292", "#f4dbc4", "#414141", "#0c0c0c"],
-  Gemini: ["#595856", "#c0bdbc", "#8d8a88", "#f5f6f7", "#0c0c0c"],
-  Cancer: ["#c0c0c8", "#8888a0", "#e8e8f0", "#606078", "#0c0c0c"],
-  Leo: ["#f28320", "#f15d22", "#d94126", "#a41d21", "#0c0c0c"],
-  Virgo: ["#8d8a88", "#595856", "#c0bdbc", "#f5f6f7", "#0c0c0c"],
-  Libra: ["#d9b292", "#878a8d", "#f4dbc4", "#414141", "#0c0c0c"],
-  Scorpio: ["#4a3a5c", "#7b6898", "#a08cb8", "#c8b8d8", "#0c0c0c"],
-  Sagittarius: ["#282311", "#c08237", "#bfaf9b", "#c0a480", "#0c0c0c"],
-  Capricorn: ["#8b7355", "#c4a96d", "#e0c98f", "#5a4a32", "#0c0c0c"],
-};
-const COLOR_OFF = "#0c0c0c";
-const KNOB_DEFAULT_COLOR = "#9070cc";
-
 const VIS_SPEED = 0.65; // visual envelope runs ~35% faster than audio
 
-const KEYBOARD_ORDER = Object.keys(SIGNS);
-const SHARP_INDICES = new Set([1, 3, 6, 8, 10]);
-const NATURAL_KEYS = KEYBOARD_ORDER.filter((_, i) => !SHARP_INDICES.has(i));
-const SHARP_KEYS = KEYBOARD_ORDER.filter((_, i) => SHARP_INDICES.has(i));
-const SHARP_POSITIONS = ["10%", "24%", "53%", "67%", "81%"];
 const SHARP_KEY_STYLES = SHARP_POSITIONS.map((left) => ({ left }));
-const SIGN_NAMES = KEYBOARD_ORDER;
-const SIGNS_BY_LOWERCASE = Object.fromEntries(
-  SIGN_NAMES.map((k) => [k.toLowerCase(), k]),
-);
+const SIGN_INDEX = Object.fromEntries(KEYBOARD_ORDER.map((s, i) => [s, i]));
+const CAN_RECORD = typeof MediaRecorder !== "undefined";
+const CHAIN_KEYS = Object.keys(CHAINS).filter((k) => k !== "custom");
 // ─── Device-aware listen preset detection ─────────────────────
 const DETECTED_LISTEN_PRESET = (() => {
   if (typeof window === "undefined") return "headphones";
@@ -346,277 +136,6 @@ const DETECTED_LISTEN_PRESET = (() => {
   return "headphones";
 })();
 // OSC_TYPES imported from tuning.js — 8 types cycled by Breathe
-
-// ─── Knob Mapping ────────────────────────────────────────────
-
-// Helper: apply a function to both A and B synth banks
-function forBothBanks(eng, fn) {
-  fn(eng.synths, eng.oscTypeTracker, eng.spreadTracker);
-  if (eng.synthsB) fn(eng.synthsB, eng.oscTypeTrackerB, eng.spreadTrackerB);
-}
-
-const KNOB_MAP = {
-  // Oscillator internals
-  harmonicity: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths, oscTypes) => {
-        for (const name of SIGN_NAMES) {
-          const t = oscTypes[name];
-          if (t.startsWith("am") || t.startsWith("fm")) {
-            synths[name].set({ oscillator: { harmonicity: v } });
-          }
-        }
-      });
-    },
-  },
-  modulationIndex: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths, oscTypes) => {
-        for (const name of SIGN_NAMES) {
-          if (oscTypes[name].startsWith("fm")) {
-            synths[name].set({ oscillator: { modulationIndex: v } });
-          }
-        }
-      });
-    },
-  },
-  oscSpread: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths, oscTypes, spreadTrk) => {
-        for (const name of SIGN_NAMES) {
-          if (oscTypes[name].startsWith("fat")) {
-            synths[name].set({ oscillator: { spread: v } });
-            spreadTrk[name] = v;
-          }
-        }
-      });
-    },
-  },
-  stagger: {
-    apply: () => {}, // read from paramsRef at playback time
-  },
-  // Voice
-  attack: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths) => {
-        for (const name of SIGN_NAMES) {
-          synths[name].set({ envelope: { attack: v * SIGN_CHARACTER[name].attackMul } });
-        }
-      });
-    },
-  },
-  decay: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths) => {
-        for (const name of SIGN_NAMES) {
-          synths[name].set({ envelope: { decay: v * SIGN_CHARACTER[name].decayMul } });
-        }
-      });
-    },
-  },
-  sustain: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths) => {
-        for (const name of SIGN_NAMES) {
-          synths[name].set({
-            envelope: {
-              sustain: Math.min(1, v * SIGN_CHARACTER[name].sustainMul),
-            },
-          });
-        }
-      });
-    },
-  },
-  release: {
-    apply: (eng, v) => {
-      forBothBanks(eng, (synths) => {
-        for (const name of SIGN_NAMES) {
-          synths[name].set({ envelope: { release: v * SIGN_CHARACTER[name].releaseMul } });
-        }
-      });
-    },
-  },
-  // Grit
-  chebyWet: {
-    apply: (eng, v) => {
-      eng.fx.chebyshev.wet.value = v;
-    },
-  },
-  chebyOrder: {
-    apply: (eng, v) => {
-      eng.fx.chebyshev.order = v;
-    },
-  },
-  // EQ
-  eqHigh: {
-    apply: (eng, v) => {
-      eng.fx.eq3.high.value = v;
-    },
-  },
-  eqMid: {
-    apply: (eng, v) => {
-      eng.fx.eq3.mid.value = v;
-    },
-  },
-  eqLow: {
-    apply: (eng, v) => {
-      eng.fx.eq3.low.value = v;
-    },
-  },
-  // Vibrato
-  vibratoFreq: {
-    apply: (eng, v) => {
-      eng.fx.vibrato.frequency.value = v;
-    },
-  },
-  vibratoDepth: {
-    apply: (eng, v) => {
-      eng.fx.vibrato.depth.value = v;
-    },
-  },
-  vibratoWet: {
-    apply: (eng, v) => {
-      eng.fx.vibrato.wet.value = v;
-    },
-  },
-  // Delay (all ramped — prevents Doppler artifacts + feedback runaway)
-  delayTime: {
-    apply: (eng, v) => {
-      const p = eng.fx.echoDelay.delayTime;
-      p.cancelAndHoldAtTime(Tone.now());
-      p.rampTo(v, 0.15);
-    },
-  },
-  delayFeedback: {
-    apply: (eng, v) => {
-      const p = eng.fx.echoFeedbackGain.gain;
-      p.cancelAndHoldAtTime(Tone.now());
-      p.rampTo(v, 0.08);
-    },
-  },
-  delayWet: {
-    apply: (eng, v) => {
-      const p = eng.fx.echoCrossfade.fade;
-      p.cancelAndHoldAtTime(Tone.now());
-      p.rampTo(v, 0.08);
-    },
-  },
-  echoFilterFreq: {
-    apply: (eng, v) => {
-      const p = eng.fx.echoFilter.frequency;
-      p.cancelAndHoldAtTime(Tone.now());
-      p.rampTo(v, 0.1);
-    },
-  },
-  // Reverb
-  reverbRoom: {
-    apply: (eng, v) => {
-      eng.fx.reverb.roomSize.value = v;
-    },
-  },
-  reverbDamp: {
-    apply: (eng, v) => {
-      eng.fx.reverb.dampening = v;
-      eng.fx.dampSweep.center = v;
-    },
-  },
-  reverbWet: {
-    apply: (eng, v) => {
-      eng.fx.reverb.wet.value = v;
-    },
-  },
-  dampSweepRate: {
-    apply: (eng, v) => {
-      eng.fx.dampSweep.rate = v;
-    },
-  },
-  dampSweepDepth: {
-    apply: (eng, v) => {
-      eng.fx.dampSweep.depth = v;
-    },
-  },
-  // Space
-  panLfoFreq: {
-    apply: (eng, v) => {
-      Object.values(eng.panLfos).forEach((l) => {
-        l.frequency.value = v;
-      });
-    },
-  },
-  panLfoAmplitude: {
-    apply: (eng, v) => {
-      Object.values(eng.panLfos).forEach((l) => {
-        l.amplitude.value = v;
-      });
-    },
-  },
-  // Phase
-  phaserFreq: {
-    apply: (eng, v) => {
-      eng.fx.phaser.frequency.value = v;
-    },
-  },
-  phaserOctaves: {
-    apply: (eng, v) => {
-      eng.fx.phaser.octaves = v;
-    },
-  },
-  phaserBase: {
-    apply: (eng, v) => {
-      eng.fx.phaser.baseFrequency = v;
-    },
-  },
-  phaserQ: {
-    apply: (eng, v) => {
-      eng.fx.phaser.Q.value = v;
-    },
-  },
-  phaserWet: {
-    apply: (eng, v) => {
-      eng.fx.phaser.wet.value = v;
-      eng.setBypass("phaser", v === 0);
-    },
-  },
-  // Chorus
-  chorusWet: {
-    apply: (eng, v) => {
-      eng.fx.chorus.wet.value = v;
-    },
-  },
-  chorusFreq: {
-    apply: (eng, v) => {
-      eng.fx.chorus.frequency.value = v;
-    },
-  },
-  chorusDelay: {
-    apply: (eng, v) => {
-      eng.fx.chorus.delayTime = v;
-    },
-  },
-  chorusDepth: {
-    apply: (eng, v) => {
-      eng.fx.chorus.depth = v;
-    },
-  },
-  // Saturate
-  distortion: {
-    apply: (eng, v) => {
-      eng.fx.distortion.distortion = v;
-    },
-  },
-  distortionWet: {
-    apply: (eng, v) => {
-      eng.fx.distortion.wet.value = v;
-      eng.setBypass("distortion", v === 0);
-    },
-  },
-  // EQ high frequency
-  eqHighFreq: {
-    apply: (eng, v) => {
-      eng.fx.eq3.highFrequency.value = v;
-    },
-  },
-};
 
 const knobScaleProps = Object.fromEntries(
   Object.entries(KNOB_DEFS).map(([name, def]) => [
@@ -687,17 +206,67 @@ const Knob = React.memo(function Knob({
     onChange(defaultValue);
   }, [defaultValue, onChange]);
 
+  // Keyboard + wheel nudging — arrows step 2% of range, shift steps 0.2%
+  const nudge = useCallback(
+    (dir, fine) => {
+      const step = fine ? 0.002 : 0.02;
+      const newNorm = Math.max(0, Math.min(1, normRef.current + dir * step));
+      onChange(mapFromNorm ? mapFromNorm(newNorm) : min + newNorm * (max - min));
+    },
+    [min, max, onChange, mapFromNorm],
+  );
+  const nudgeRef = useRef(nudge);
+  nudgeRef.current = nudge;
+
+  const onKeyDown = useCallback((e) => {
+    switch (e.key) {
+      case "ArrowUp":
+      case "ArrowRight":
+        e.preventDefault();
+        nudgeRef.current(1, e.shiftKey);
+        break;
+      case "ArrowDown":
+      case "ArrowLeft":
+        e.preventDefault();
+        nudgeRef.current(-1, e.shiftKey);
+        break;
+      default:
+    }
+  }, []);
+
+  // Wheel needs a non-passive native listener to preventDefault page scroll
+  const svgRef = useRef(null);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      nudgeRef.current(e.deltaY > 0 ? -1 : 1, e.shiftKey);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div className="cel-knob">
       <span className="cel-knob-label">{label}</span>
       <svg
+        ref={svgRef}
         width="56"
         height="56"
         className="cel-knob-svg"
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        aria-valuetext={format ? format(value) : String(value)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onDoubleClick={onDoubleClick}
+        onKeyDown={onKeyDown}
       >
         <path
           d={KNOB_TRACK_PATH}
@@ -727,430 +296,9 @@ const Knob = React.memo(function Knob({
   );
 });
 
-// ─── Audio Engine Factory ────────────────────────────────────
+// ─── Engine creation lock ───────────────────────────────────
 
-let _enginePromise = null; // creation lock — prevents duplicate contexts
-
-async function createEngine() {
-  Tone = await import("tone");
-  const yield_ = () => new Promise(r => setTimeout(r, 0));
-  // iOS: route through media channel — bypasses mute switch (iOS 17+)
-  if ("audioSession" in navigator) {
-    navigator.audioSession.type = "playback";
-  }
-
-  const ctx = new Tone.Context({
-    latencyHint: "playback",
-    sampleRate: TUNING.sampleRate,
-    lookAhead: 0.3,
-    updateInterval: 0.025,
-  });
-  Tone.setContext(ctx);
-  await Tone.start();
-  // Belt-and-suspenders: wait for the raw AudioContext to actually resume
-  if (ctx.rawContext.state !== "running") {
-    await ctx.rawContext.resume();
-  }
-
-  // ─── Diagnostic: AudioContext state tracking ───
-  _diag.ctx = ctx;
-  _diag.audioInfo = {
-    baseLatency: ctx.rawContext.baseLatency ?? null,
-    outputLatency: ctx.rawContext.outputLatency ?? null,
-    bufferSize: ctx.rawContext.baseLatency != null
-      ? Math.round(ctx.rawContext.baseLatency * ctx.rawContext.sampleRate)
-      : null,
-    sampleRate: ctx.rawContext.sampleRate,
-  };
-  _diag.ctxStateLog.push({ state: ctx.rawContext.state, time: performance.now() });
-  ctx.rawContext.addEventListener('statechange', () => {
-    _diag.ctxStateLog.push({ state: ctx.rawContext.state, time: performance.now() });
-    if (ctx.rawContext.state !== 'running')
-      console.warn(`[selekta] AudioContext → ${ctx.rawContext.state}`);
-  });
-
-  // iOS: silent keepalive prevents context suspension on lock/background.
-  // Pre-iOS 17 fallback for mute switch bypass (inaudible at 1e-37 gain).
-  const keepAlive = ctx.rawContext.createOscillator();
-  const muteGain = ctx.rawContext.createGain();
-  muteGain.gain.value = 1e-37;
-  keepAlive.connect(muteGain);
-  muteGain.connect(ctx.rawContext.destination);
-  keepAlive.start();
-  await yield_();
-
-  // ─── FX chain (constructed before synths so panners have a target) ───
-
-  const chebyshev = new Tone.Chebyshev(TUNING.chebyOrder);
-  chebyshev.wet.value = TUNING.chebyWet;
-  chebyshev.oversample = "none";
-
-  const eq3 = new Tone.EQ3({
-    high: TUNING.eqHigh,
-    mid: TUNING.eqMid,
-    low: TUNING.eqLow,
-    highFrequency: TUNING.eqHighFreq,
-  });
-
-  const vibrato = new Tone.Vibrato({
-    frequency: TUNING.vibratoFreq,
-    depth: TUNING.vibratoDepth,
-  });
-  vibrato.wet.value = TUNING.vibratoWet;
-
-  // ─── Custom echo loop (filter + saturation in feedback path) ───
-  const echoDelay = new Tone.Delay({
-    delayTime: TUNING.delayTime,
-    maxDelay: 2,
-  });
-  const echoFeedbackGain = new Tone.Gain(TUNING.delayFeedback);
-  const echoFilter = new Tone.Filter({
-    frequency: TUNING.echoFilterFreq,
-    type: "lowpass",
-    rolloff: -12,
-  });
-  const echoSat = new Tone.WaveShaper(
-    (v) => Math.tanh(v * TUNING.echoSatDrive),
-    1024,
-  );
-  const echoCrossfade = new Tone.CrossFade(TUNING.delayWet);
-  const echoInputGain = new Tone.Gain(TUNING.echoInputGain);
-
-  // Feedback loop: delay out → filter → saturator → gain → delay in
-  echoDelay.connect(echoFilter);
-  echoFilter.connect(echoSat);
-  echoSat.connect(echoFeedbackGain);
-  echoFeedbackGain.connect(echoDelay);
-
-  const reverb = new Tone.Freeverb({
-    roomSize: TUNING.reverbRoom,
-    dampening: TUNING.reverbDamp,
-  });
-  reverb.wet.value = TUNING.reverbWet;
-
-  const reverbPreDelay = new Tone.Delay({ delayTime: 0.025, maxDelay: 0.1 });
-  reverbPreDelay.connect(reverb);
-
-  // Damp sweep — sinusoidal modulation of reverb dampening.
-  // Sweeps the comb filter cutoff for evolving resonance morphing.
-  // depth=0 disables. At depth=1, sweeps full range around center.
-  const dampSweep = {
-    rate: TUNING.dampSweepRate,
-    depth: TUNING.dampSweepDepth,
-    center: TUNING.reverbDamp,
-    _phase: 0,
-    _eventId: null,
-    start() {
-      if (this._eventId !== null) this.stop();
-      if (Tone.Transport.state !== "started") Tone.Transport.start();
-      const tickSec = 0.05;
-      this._eventId = Tone.Transport.scheduleRepeat(() => {
-        if (this.depth <= 0) return;
-        this._phase += 2 * Math.PI * this.rate * tickSec;
-        if (this._phase > 2 * Math.PI) this._phase -= 2 * Math.PI;
-        const mod = Math.sin(this._phase);
-        const logCenter = Math.log(this.center);
-        const logRange = this.depth * 2.5;
-        const val = Math.exp(logCenter + mod * logRange);
-        reverb.dampening = Math.max(200, Math.min(8000, val));
-      }, tickSec);
-    },
-    stop() {
-      if (this._eventId !== null) {
-        Tone.Transport.clear(this._eventId);
-        this._eventId = null;
-      }
-    },
-  };
-  dampSweep.start();
-
-  const monitorEQ = new Tone.EQ3({
-    low: 0,
-    mid: 0,
-    high: 0,
-    lowFrequency: TUNING.monitorLowFreq,
-    highFrequency: TUNING.monitorHighFreq,
-  });
-
-  const phaser = new Tone.Phaser({
-    frequency: TUNING.phaserFreq,
-    octaves: TUNING.phaserOctaves,
-    baseFrequency: TUNING.phaserBase,
-    Q: TUNING.phaserQ,
-  });
-  phaser.wet.value = TUNING.phaserWet;
-
-  const chorus = new Tone.Chorus({
-    frequency: TUNING.chorusFreq,
-    delayTime: TUNING.chorusDelay,
-    depth: TUNING.chorusDepth,
-  });
-  chorus.wet.value = TUNING.chorusWet;
-
-  const distortion = new Tone.Distortion({
-    distortion: TUNING.distortion,
-    oversample: "none",
-  });
-  distortion.wet.value = TUNING.distortionWet;
-
-  // tanh soft clip — preserves Freeverb resonant peaks that Limiter(-1) killed
-  const softClip = new Tone.WaveShaper((val) => Math.tanh(val), 4096);
-  softClip.oversample = "none";
-
-  // Summing bus — all panners feed here so voices intermodulate through Chebyshev
-  const sumBus = new Tone.Gain(1);
-
-  const highpass = new Tone.Filter({
-    frequency: TUNING.highpassFreq,
-    type: "highpass",
-    rolloff: TUNING.highpassRolloff,
-  });
-  sumBus.connect(highpass);
-
-  // ─── Chain builder ───
-  function wireChain(src, nodes, config) {
-    const { order, bypass } = config;
-    let prev = src;
-    for (const name of order) {
-      if (name === "ECHO") {
-        prev.connect(nodes.echoCrossfade.a);
-        prev.connect(nodes.echoInputGain);
-        nodes.echoInputGain.connect(nodes.echoDelay);
-        nodes.echoDelay.connect(nodes.echoCrossfade.b);
-        prev = nodes.echoCrossfade;
-      } else {
-        prev.connect(nodes[name]);
-        prev = nodes[name];
-      }
-    }
-    prev.toDestination();
-
-    const bypassState = {};
-    const bypassable = {};
-    for (const [name, cfg] of Object.entries(bypass)) {
-      bypassState[name] = true;
-      bypassable[name] = {
-        node: nodes[name],
-        prev: nodes[cfg.after],
-        next: nodes[cfg.before],
-      };
-    }
-    return { bypassState, bypassable };
-  }
-
-  const chainNodes = {
-    chebyshev,
-    eq3,
-    vibrato,
-    reverb: reverbPreDelay, // chain sees this as "reverb" node, pre-delay feeds actual reverb
-    chorus,
-    monitorEQ,
-    softClip,
-    phaser,
-    distortion,
-    echoCrossfade,
-    echoDelay,
-    echoInputGain,
-  };
-  await yield_();
-  const { bypassState, bypassable } = wireChain(
-    highpass,
-    chainNodes,
-    CHAINS[ACTIVE_CHAIN],
-  );
-
-  function setBypass(name, bypassed) {
-    if (bypassState[name] === bypassed) return;
-    const b = bypassable[name];
-    try {
-      if (bypassed) {
-        if (b.node.wet) {
-          b.node.wet.rampTo(0, 0.05);
-          setTimeout(() => {
-            try {
-              b.prev.disconnect(b.node);
-              b.node.disconnect(b.next);
-              b.prev.connect(b.next);
-            } catch (e) {
-              /* ignore */
-            }
-          }, 60);
-        } else {
-          b.prev.disconnect(b.node);
-          b.node.disconnect(b.next);
-          b.prev.connect(b.next);
-        }
-      } else {
-        b.prev.disconnect(b.next);
-        b.prev.connect(b.node);
-        b.node.connect(b.next);
-        if (b.node.wet) b.node.wet.rampTo(b.node.wet.value || 1, 0.05);
-      }
-      bypassState[name] = bypassed;
-    } catch (e) {
-      /* ignore */
-    }
-  }
-
-  // ─── Per-sign synths + panners ──────────────────────────
-
-  const synths = {};
-  const panners = {};
-  const spreadTracker = {};
-
-  Object.entries(SIGN_CHARACTER).forEach(([name, cfg]) => {
-    const panner = new Tone.Panner(cfg.panBase);
-    const synth = new Tone.PolySynth(Tone.Synth, {
-      maxPolyphony: 1,
-      voice: Tone.Synth,
-      options: {
-        oscillator: {
-          type: cfg.oscType,
-          ...(cfg.oscType.startsWith("fat")
-            ? { count: cfg.oscCount, spread: cfg.oscSpread }
-            : {}),
-        },
-        envelope: {
-          attack: TUNING.attack * cfg.attackMul,
-          decay: TUNING.decay * cfg.decayMul,
-          sustain: Math.min(1, TUNING.sustain * cfg.sustainMul),
-          release: TUNING.release * cfg.releaseMul,
-        },
-        volume: -9 + (OCTAVE_GAIN[cfg.octave] || 0),
-      },
-    });
-    synth.set({ detune: cfg.detuneCents });
-    synth.connect(panner);
-    panner.connect(sumBus);
-    synths[name] = synth;
-    panners[name] = panner;
-    spreadTracker[name] = cfg.oscSpread;
-  });
-  await yield_();
-
-  const oscTypeTracker = Object.fromEntries(
-    Object.entries(SIGN_CHARACTER).map(([name, cfg]) => [name, cfg.oscType]),
-  );
-
-  const detuneTracker = Object.fromEntries(
-    Object.keys(SIGN_CHARACTER).map((s) => [s, SIGN_CHARACTER[s].detuneCents]),
-  );
-
-  // ─── Chart B synth bank — same per-sign oscTypes, mirrored pan ──
-  const synthsB = {};
-  const pannersB = {};
-  const spreadTrackerB = {};
-
-  Object.entries(SIGN_CHARACTER).forEach(([name, cfg]) => {
-    const pannerB = new Tone.Panner(-cfg.panBase * 0.3);
-    const synthB = new Tone.PolySynth(Tone.Synth, {
-      maxPolyphony: 1,
-      voice: Tone.Synth,
-      options: {
-        oscillator: {
-          type: cfg.oscType,
-          ...(cfg.oscType.startsWith("fat")
-            ? { count: cfg.oscCount, spread: cfg.oscSpread }
-            : {}),
-        },
-        envelope: {
-          attack: TUNING.attack * cfg.attackMul,
-          decay: TUNING.decay * cfg.decayMul,
-          sustain: Math.min(1, TUNING.sustain * cfg.sustainMul),
-          release: TUNING.release * cfg.releaseMul,
-        },
-        volume: -9 + (OCTAVE_GAIN[cfg.octave] || 0),
-      },
-    });
-    synthB.set({ detune: cfg.detuneCents });
-    synthB.connect(pannerB);
-    pannerB.connect(sumBus);
-    synthsB[name] = synthB;
-    pannersB[name] = pannerB;
-    spreadTrackerB[name] = cfg.oscSpread;
-  });
-
-  const oscTypeTrackerB = Object.fromEntries(
-    Object.entries(SIGN_CHARACTER).map(([name, cfg]) => [name, cfg.oscType]),
-  );
-
-  const detuneTrackerB = Object.fromEntries(
-    Object.keys(SIGN_CHARACTER).map((s) => [s, SIGN_CHARACTER[s].detuneCents]),
-  );
-
-  // ─── Group LFOs — one per panGroup, drift all panners in that group ──
-
-  const panLfos = {};
-  ["A", "B", "C", "D"].forEach((group) => {
-    const lfo = new Tone.LFO({ frequency: TUNING.panLfoFreq, min: -1, max: 1 });
-    lfo.amplitude.value = TUNING.panLfoAmplitude;
-    lfo.start();
-    Object.entries(SIGN_CHARACTER).forEach(([name, cfg]) => {
-      if (cfg.panGroup === group) lfo.connect(panners[name].pan);
-    });
-    panLfos[group] = lfo;
-  });
-
-  return {
-    synths,
-    panners,
-    panLfos,
-    spreadTracker,
-    detuneTracker,
-    oscTypeTracker,
-    synthsB,
-    pannersB,
-    spreadTrackerB,
-    detuneTrackerB,
-    oscTypeTrackerB,
-    setBypass,
-    fx: {
-      reverb,
-      echoDelay,
-      echoFeedbackGain,
-      echoFilter,
-      echoSat,
-      echoCrossfade,
-      echoInputGain,
-      chorus,
-      vibrato,
-      chebyshev,
-      eq3,
-      monitorEQ,
-      phaser,
-      distortion,
-      dampSweep,
-    },
-    dispose() {
-      dampSweep.stop();
-      Object.values(synths).forEach((s) => s.dispose());
-      Object.values(panners).forEach((p) => p.dispose());
-      Object.values(synthsB).forEach((s) => s.dispose());
-      Object.values(pannersB).forEach((p) => p.dispose());
-      Object.values(panLfos).forEach((l) => l.dispose());
-      [
-        sumBus,
-        highpass,
-        chebyshev,
-        distortion,
-        eq3,
-        vibrato,
-        echoDelay,
-        echoFeedbackGain,
-        echoFilter,
-        echoSat,
-        echoCrossfade,
-        echoInputGain,
-        chorus,
-        reverbPreDelay,
-        reverb,
-        phaser,
-        monitorEQ,
-        softClip,
-      ].forEach((n) => n.dispose());
-    },
-  };
-}
+let _enginePromise = null; // prevents duplicate contexts
 
 // ─── Component ───────────────────────────────────────────────
 
@@ -1339,6 +487,7 @@ const KeyboardSection = React.memo(function KeyboardSection({
             )}
             <span className="cel-key-glyph">{cfg.glyph}</span>
             <span className="cel-key-name">{sign}</span>
+            <span className="cel-key-kbd">{SIGN_TO_KEY[sign]}</span>
             {(hasChartA || hasChartB) && (
               <span className="cel-key-bodies">
                 {hasChartA && hasChartA.planets.map(p => (
@@ -1444,6 +593,25 @@ export default function App() {
   const natalGenBRef = useRef(0);
   const activeSignsARef = useRef(new Set());
   const activeSignsBRef = useRef(new Set());
+  // Chart bodies + aspects (per chart), synastry derived below
+  const [bodiesA, setBodiesA] = useState({});
+  const [bodiesB, setBodiesB] = useState({});
+  const [aspectsA, setAspectsA] = useState([]);
+  const [aspectsB, setAspectsB] = useState([]);
+  const aspectModsRef = useRef({ A: {}, B: {} });
+  // Runtime chain, orbit, perform, record, midi, share
+  const [activeChain, setActiveChain] = useState(ACTIVE_CHAIN);
+  const activeChainRef = useRef(ACTIVE_CHAIN);
+  const [orbit, setOrbit] = useState(false);
+  const orbitRef = useRef({ on: false, events: [], timeouts: [] });
+  const [perform, setPerform] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false);
+  const [midiLabel, setMidiLabel] = useState("midi: off");
+  const midiRef = useRef(null);
+  const [linkFeedback, setLinkFeedback] = useState(false);
+  const loadInputRef = useRef(null);
+  const listenPresetRef = useRef(DETECTED_LISTEN_PRESET);
 
   const setParam = useCallback((name, value) => {
     const p = paramsRef.current;
@@ -1493,18 +661,29 @@ export default function App() {
     setParams(newParams);
   }, []);
 
-  const buildSnapshot = useCallback(() => ({
-    meta: { name: "untitled", timestamp: new Date().toISOString(), version: "v12" },
-    chain: ACTIVE_CHAIN,
-    oscType: oscIndex === null ? "per-sign" : OSC_TYPES[oscIndex],
-    signs: Object.fromEntries(SIGN_NAMES.map(s => [s, activeSignsARef.current.has(s)])),
-    knobs: { ...paramsRef.current },
-    listen: listenPreset,
-    eclipse: shadow,
-  }), [oscIndex, listenPreset, shadow]);
+  const collectSnapshot = useCallback(
+    () =>
+      buildSnapshot({
+        signsA: Object.fromEntries(
+          SIGN_NAMES.map((s) => [s, activeSignsARef.current.has(s)]),
+        ),
+        signsB: Object.fromEntries(
+          SIGN_NAMES.map((s) => [s, activeSignsBRef.current.has(s)]),
+        ),
+        knobs: paramsRef.current,
+        chain: activeChainRef.current,
+        oscType: oscIndex === null ? "per-sign" : OSC_TYPES[oscIndex],
+        listen: listenPreset,
+        eclipse: shadow,
+        orbit,
+        natalA: { date: natalDate, time: natalTime, lat: natalLat, lng: natalLng, city: cityQueryA },
+        natalB: { date: natalDateB, time: natalTimeB, lat: natalLatB, lng: natalLngB, city: cityQueryB },
+      }),
+    [oscIndex, listenPreset, shadow, orbit, natalDate, natalTime, natalLat, natalLng, cityQueryA, natalDateB, natalTimeB, natalLatB, natalLngB, cityQueryB],
+  );
 
   const exportSnapshot = useCallback(() => {
-    const snap = buildSnapshot();
+    const snap = collectSnapshot();
     const blob = new Blob([JSON.stringify(snap, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1512,15 +691,109 @@ export default function App() {
     a.download = `celezdial-snapshot-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [buildSnapshot]);
+  }, [collectSnapshot]);
 
   const copySnapshot = useCallback(() => {
-    const snap = buildSnapshot();
+    const snap = collectSnapshot();
     navigator.clipboard.writeText(JSON.stringify(snap, null, 2)).then(() => {
       setCopyFeedback(true);
       setTimeout(() => setCopyFeedback(false), 1200);
     });
-  }, [buildSnapshot]);
+  }, [collectSnapshot]);
+
+  // Restore a parsed snapshot: fields, knobs, chain, listen, osc type.
+  // Playback stays silent by design — charts recompute from the restored
+  // inputs, then Play (or Orbit) is the user's gesture.
+  const applySnapshotState = useCallback((snap) => {
+    if (!snap) return;
+    const p = paramsRef.current;
+    for (const [name, def] of Object.entries(KNOB_DEFS)) {
+      const v = snap.knobs[name];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        p[name] = Math.min(def.max, Math.max(def.min, v));
+      }
+    }
+    setParams({ ...p });
+    const eng = engineRef.current;
+    if (eng) {
+      for (const name of Object.keys(KNOB_DEFS)) {
+        KNOB_MAP[name]?.apply(eng, p[name]);
+      }
+    }
+    if (snap.chain && CHAINS[snap.chain]) {
+      activeChainRef.current = snap.chain;
+      setActiveChain(snap.chain);
+      eng?.rewireChain(snap.chain);
+    }
+    if (snap.oscType) {
+      if (snap.oscType === "per-sign") {
+        pendingOscTypeRef.current = "per-sign";
+        activeOscTypeRef.current = null;
+        setOscIndex(null);
+      } else {
+        const i = OSC_TYPES.indexOf(snap.oscType);
+        if (i >= 0) {
+          pendingOscTypeRef.current = OSC_TYPES[i];
+          activeOscTypeRef.current = OSC_TYPES[i];
+          setOscIndex(i);
+        }
+      }
+    }
+    if (snap.listen && LISTEN_PRESETS[snap.listen]) {
+      setListenPreset(snap.listen);
+      if (eng?.fx.monitorEQ) {
+        const lp = LISTEN_PRESETS[snap.listen];
+        eng.fx.monitorEQ.low.value = lp.low;
+        eng.fx.monitorEQ.mid.value = lp.mid;
+        eng.fx.monitorEQ.high.value = lp.high;
+      }
+    }
+    const a = snap.natal?.a;
+    if (a) {
+      setNatalDate(a.date || "");
+      setNatalTime(a.time || "");
+      setNatalLat(a.lat);
+      setNatalLng(a.lng);
+      citySelectedARef.current = !!a.city; // suppress autocomplete re-trigger
+      setCityQueryA(a.city || "");
+    }
+    const b = snap.natal?.b;
+    if (b) {
+      setNatalDateB(b.date || "");
+      setNatalTimeB(b.time || "");
+      setNatalLatB(b.lat);
+      setNatalLngB(b.lng);
+      citySelectedBRef.current = !!b.city;
+      setCityQueryB(b.city || "");
+    }
+  }, []);
+
+  const shareLink = useCallback(() => {
+    const enc = encodeShareState(collectSnapshot());
+    const url = `${window.location.origin}${window.location.pathname}#s=${enc}`;
+    window.history.replaceState(null, "", `#s=${enc}`);
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkFeedback(true);
+      setTimeout(() => setLinkFeedback(false), 1200);
+    });
+  }, [collectSnapshot]);
+
+  const loadSnapshotFile = useCallback(
+    (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      file.text().then((text) => applySnapshotState(parseSnapshot(text)));
+    },
+    [applySnapshotState],
+  );
+
+  // Share-link restore — birth data lives in the fragment, never sent anywhere
+  useEffect(() => {
+    const snap = shareStateFromHash(window.location.hash);
+    if (snap) applySnapshotState(snap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Pre-computed format functions — stable references for React.memo
   const formatFns = useMemo(
@@ -1550,6 +823,30 @@ export default function App() {
       keysB,
     };
   }, [natalActivations, natalActivationsB]);
+
+  // Synastry aspects between the two charts, and the per-voice modifiers
+  // (velocity boosts, tension partners) all trigger paths read via ref.
+  const synastryAspects = useMemo(
+    () => computeSynastryAspects(bodiesA, bodiesB),
+    [bodiesA, bodiesB],
+  );
+  const aspectMods = useMemo(
+    () =>
+      aspectVoiceMods({
+        aspectsA,
+        aspectsB,
+        synastry: synastryAspects,
+        bodiesA,
+        bodiesB,
+      }),
+    [aspectsA, aspectsB, synastryAspects, bodiesA, bodiesB],
+  );
+  useEffect(() => {
+    aspectModsRef.current = aspectMods;
+  }, [aspectMods]);
+  useEffect(() => {
+    listenPresetRef.current = listenPreset;
+  }, [listenPreset]);
 
   // Stable key ref callbacks — same function identity across renders, prevents 24 spurious ref calls
   const keyRefCallbacks = useMemo(
@@ -1587,6 +884,8 @@ export default function App() {
   useEffect(() => {
     return () => {
       shadowIntervalsRef.current.forEach((id) => Tone.Transport.clear(id));
+      orbitRef.current.events.forEach((id) => Tone.Transport.clear(id));
+      orbitRef.current.timeouts.forEach(clearTimeout);
       if (engineRef.current) {
         engineRef.current.dispose();
         engineRef.current = null;
@@ -1973,12 +1272,17 @@ export default function App() {
     if (engineRef.current) return engineRef.current;
     // Serialize creation — all concurrent callers share one promise
     if (!_enginePromise) {
-      _enginePromise = createEngine().then((eng) => {
-        for (const [name, def] of Object.entries(KNOB_DEFS)) {
-          KNOB_MAP[name]?.apply(eng, def.default);
+      _enginePromise = createEngine({
+        chain: activeChainRef.current,
+        diag: _diag,
+      }).then((eng) => {
+        // Apply live param values — matters after a share-link or file
+        // restore that ran before the first user gesture
+        for (const name of Object.keys(KNOB_DEFS)) {
+          KNOB_MAP[name]?.apply(eng, paramsRef.current[name]);
         }
-        // Apply detected listen preset EQ
-        const lp = LISTEN_PRESETS[DETECTED_LISTEN_PRESET];
+        // Apply current listen preset EQ
+        const lp = LISTEN_PRESETS[listenPresetRef.current];
         if (lp && eng.fx.monitorEQ) {
           eng.fx.monitorEQ.low.value = lp.low;
           eng.fx.monitorEQ.mid.value = lp.mid;
@@ -2116,6 +1420,8 @@ export default function App() {
           bank.synths[sign].releaseAll(Tone.now());
           bank.synths[sign].set({ detune: cfg.detuneCents });
           activeSet.delete(sign);
+          if (bank.key === "A")
+            midiRef.current?.noteOff(SIGN_INDEX[sign], cfg.note, cfg.octave);
           const vs = visualStateRef.current[bank.suffix ? `${sign}${bank.suffix}` : sign];
           if (vs) {
             vs.releaseStartLevel = vs.envelopeLevel;
@@ -2126,13 +1432,26 @@ export default function App() {
         } else {
           // ── Attack ──
           applyPendingOscType(eng);
-          if (bank.activations[sign]) {
-            bank.synths[sign].set({ detune: bank.activations[sign].detuneCents });
+          const mod = aspectModsRef.current?.[bank.key]?.[sign];
+          let detune = bank.activations[sign]
+            ? bank.activations[sign].detuneCents
+            : cfg.detuneCents;
+          // Tense aspect against an already-sounding partner voice — push
+          // this voice off its natal tuning; the beat carries the tension
+          if (mod?.tense?.length) {
+            const partnerSounding = mod.tense.some((t) =>
+              (t.bank === "A" ? activeSignsARef : activeSignsBRef).current.has(t.sign),
+            );
+            if (partnerSounding) detune += TUNING.aspectTensionCents;
           }
+          bank.synths[sign].set({ detune });
           activeSet.add(sign);
           if (_diag.noteEvents.length >= 100) _diag.noteEvents.shift();
           _diag.noteEvents.push({ type: "attack", sign, bank: bank.key, time: performance.now() });
-          bank.synths[sign].triggerAttack(note, Tone.now(), cfg.vel);
+          const vel = Math.min(0.95, cfg.vel * (1 + (mod?.boost || 0)));
+          bank.synths[sign].triggerAttack(note, Tone.now(), vel);
+          if (bank.key === "A")
+            midiRef.current?.noteOn(SIGN_INDEX[sign], cfg.note, cfg.octave, vel, detune);
           const ci = colorIndexRef.current[sign] || 0;
           colorIndexRef.current[sign] = (ci + 1) % 4;
           const vsKey = bank.suffix ? `${sign}${bank.suffix}` : sign;
@@ -2181,6 +1500,73 @@ export default function App() {
     eng.fx.reverb.wet.rampTo(saved.reverbWet, 0.5);
   }, []);
 
+  // ─── Orbit mode ───────────────────────────────────────────────
+  // Chart voices stop sustaining and breathe on cycles derived from
+  // their ruling planets' orbital periods — Cousto applied to rhythm.
+
+  const spawnOrbitVisual = useCallback((sign, bankSuffix, delayMs, holdSec) => {
+    const cfg = SIGN_CHARACTER[sign];
+    const p = paramsRef.current;
+    const vsKey = bankSuffix ? `${sign}${bankSuffix}` : sign;
+    const t1 = setTimeout(() => {
+      const ci = colorIndexRef.current[vsKey] || 0;
+      colorIndexRef.current[vsKey] = (ci + 1) % 4;
+      const had = !!visualStateRef.current[vsKey];
+      visualStateRef.current[vsKey] = {
+        stage: "attack",
+        startTime: performance.now(),
+        envelopeLevel: 0,
+        attackTime: p.attack * cfg.attackMul * VIS_SPEED,
+        decayTime: p.decay * cfg.decayMul * VIS_SPEED,
+        sustainLevel: Math.min(1, p.sustain * cfg.sustainMul),
+        releaseTime: p.release * cfg.releaseMul * VIS_SPEED,
+        releaseStartLevel: 0,
+        activeColor: _SIGN_RGB[sign]?.[ci] ?? _DEFAULT_COLOR,
+      };
+      if (!had) _VS_ACTIVE[_vsActiveCount++] = vsKey;
+      if (startLoopRef.current) startLoopRef.current();
+    }, delayMs);
+    const t2 = setTimeout(() => {
+      const vs = visualStateRef.current[vsKey];
+      if (vs && vs.stage !== "idle") {
+        vs.releaseStartLevel = vs.envelopeLevel;
+        vs.stage = "release";
+        vs.startTime = performance.now();
+        vs.releaseTime = p.release * cfg.releaseMul * VIS_SPEED;
+      }
+    }, delayMs + holdSec * 1000);
+    orbitRef.current.timeouts.push(t1, t2);
+  }, []);
+
+  const stopOrbit = useCallback((eng) => {
+    const ob = orbitRef.current;
+    ob.events.forEach((id) => Tone.Transport.clear(id));
+    ob.events = [];
+    ob.timeouts.forEach(clearTimeout);
+    ob.timeouts = [];
+    ob.on = false;
+    if (eng) {
+      for (const name of SIGN_NAMES) {
+        eng.synths[name].releaseAll(Tone.now());
+        eng.synthsB[name].releaseAll(Tone.now());
+      }
+    }
+    const p = paramsRef.current;
+    for (const sign of KEYBOARD_ORDER) {
+      for (const key of [sign, `${sign}_B`]) {
+        const vs = visualStateRef.current[key];
+        if (vs && vs.stage !== "idle" && vs.stage !== "release") {
+          vs.releaseStartLevel = vs.envelopeLevel;
+          vs.stage = "release";
+          vs.startTime = performance.now();
+          vs.releaseTime = p.release * SIGN_CHARACTER[sign].releaseMul * VIS_SPEED;
+        }
+      }
+    }
+    midiRef.current?.allOff();
+    setOrbit(false);
+  }, []);
+
   const breathe = useCallback(async () => {
     const eng = await ensureEngine();
     if (shadow) {
@@ -2221,6 +1607,8 @@ export default function App() {
 
   const stopAll = useCallback(async () => {
     const eng = await ensureEngine();
+    if (orbitRef.current.on) stopOrbit(eng);
+    midiRef.current?.allOff();
     stopNatalPlayback(eng);
     const p = paramsRef.current;
     const release = p.release;
@@ -2248,10 +1636,22 @@ export default function App() {
     for (const s of KEYBOARD_ORDER) updateKeyActive(s);
     setAnyActive(false);
     setStatus("ready");
-  }, [ensureEngine, stopNatalPlayback, updateKeyActive]);
+  }, [ensureEngine, stopNatalPlayback, stopOrbit, updateKeyActive]);
+
+  // Tense-aspect detune for simultaneous starts: the later sign of the
+  // pair (keyboard order) takes the shift, so exactly one voice moves.
+  const tensionShift = useCallback((mod, sign, _na, _nb) => {
+    if (!mod?.tense?.length) return 0;
+    const shifted = mod.tense.some((t) => {
+      const acts = t.bank === "A" ? _na : _nb;
+      return acts[t.sign] && SIGN_INDEX[t.sign] < SIGN_INDEX[sign];
+    });
+    return shifted ? TUNING.aspectTensionCents : 0;
+  }, []);
 
   const playAll = useCallback(async () => {
     const eng = await ensureEngine();
+    if (orbitRef.current.on) stopOrbit(eng);
     applyPendingOscType(eng);
     const p = paramsRef.current;
     const stagger = p.stagger ?? 0;
@@ -2259,6 +1659,7 @@ export default function App() {
 
     const _na = natalActivationsRef.current;
     const _nb = natalActivationsBRef.current;
+    const _mods = aspectModsRef.current;
     for (const sign of KEYBOARD_ORDER) {
       const inA = !!_na[sign];
       const inB = !!_nb[sign];
@@ -2270,8 +1671,13 @@ export default function App() {
       const now = Tone.now() + delay;
 
       if (inA && !activeSignsARef.current.has(sign)) {
-        if (_na[sign]) eng.synths[sign].set({ detune: _na[sign].detuneCents });
-        eng.synths[sign].triggerAttack(note, now, cfg.vel);
+        const modA = _mods?.A?.[sign];
+        const detuneA =
+          _na[sign].detuneCents + tensionShift(modA, sign, _na, _nb);
+        eng.synths[sign].set({ detune: detuneA });
+        const velA = Math.min(0.95, cfg.vel * (1 + (modA?.boost || 0)));
+        eng.synths[sign].triggerAttack(note, now, velA);
+        midiRef.current?.noteOn(SIGN_INDEX[sign], cfg.note, cfg.octave, velA, detuneA);
         const ci = colorIndexRef.current[sign] || 0;
         colorIndexRef.current[sign] = (ci + 1) % 4;
         const _hadVsA = !!visualStateRef.current[sign];
@@ -2289,8 +1695,12 @@ export default function App() {
       }
 
       if (inB && !activeSignsBRef.current.has(sign)) {
-        if (_nb[sign]) eng.synthsB[sign].set({ detune: _nb[sign].detuneCents });
-        eng.synthsB[sign].triggerAttack(note, now, cfg.vel);
+        const modB = _mods?.B?.[sign];
+        eng.synthsB[sign].set({
+          detune: _nb[sign].detuneCents + tensionShift(modB, sign, _na, _nb),
+        });
+        const velB = Math.min(0.95, cfg.vel * (1 + (modB?.boost || 0)));
+        eng.synthsB[sign].triggerAttack(note, now, velB);
         const ciB = colorIndexRef.current[`${sign}_B`] || 0;
         colorIndexRef.current[`${sign}_B`] = (ciB + 1) % 4;
         const _bKey = `${sign}_B`;
@@ -2321,7 +1731,76 @@ export default function App() {
     if (startLoopRef.current) startLoopRef.current();
     setAnyActive(true);
     setStatus("playing");
-  }, [ensureEngine, updateKeyActive]);
+  }, [ensureEngine, stopOrbit, tensionShift, updateKeyActive]);
+
+  const toggleOrbit = useCallback(async () => {
+    const eng = await ensureEngine();
+    if (orbitRef.current.on) {
+      stopOrbit(eng);
+      const total = activeSignsARef.current.size + activeSignsBRef.current.size;
+      setStatus(total > 0 ? "playing" : "ready");
+      return;
+    }
+    const _na = natalActivationsRef.current;
+    const _nb = natalActivationsBRef.current;
+    const entries = [];
+    for (const sign of KEYBOARD_ORDER) {
+      if (_na[sign]) entries.push({ sign, bank: "A" });
+      if (_nb[sign]) entries.push({ sign, bank: "B" });
+    }
+    if (!entries.length) return;
+
+    // Sustained voices hand over to the cycles
+    stopNatalPlayback(eng);
+    activeSignsARef.current.clear();
+    activeSignsBRef.current.clear();
+    for (const s of KEYBOARD_ORDER) updateKeyActive(s);
+    setAnyActive(false);
+    applyPendingOscType(eng);
+
+    entries.forEach((e, i) => {
+      const cfg = SIGN_CHARACTER[e.sign];
+      const period = orbitPeriodSeconds(SIGN_RULERS[e.sign]);
+      const hold = period * TUNING.orbitDuty;
+      const phase = period * ((i * 0.618034) % 1) * 0.8; // golden-ratio spread
+      const id = Tone.Transport.scheduleRepeat(
+        (time) => {
+          const acts =
+            e.bank === "A"
+              ? natalActivationsRef.current
+              : natalActivationsBRef.current;
+          if (!acts[e.sign]) return; // chart cleared while orbiting
+          const synth =
+            e.bank === "A" ? eng.synths[e.sign] : eng.synthsB[e.sign];
+          const mod = aspectModsRef.current?.[e.bank]?.[e.sign];
+          const detune = acts[e.sign].detuneCents;
+          synth.set({ detune });
+          const vel = Math.min(0.95, cfg.vel * (1 + (mod?.boost || 0)));
+          synth.triggerAttackRelease(`${cfg.note}${cfg.octave}`, hold, time, vel);
+          const delayMs = Math.max(0, (time - Tone.now()) * 1000);
+          spawnOrbitVisual(e.sign, e.bank === "B" ? "_B" : "", delayMs, hold);
+          if (e.bank === "A" && midiRef.current) {
+            midiRef.current.noteOn(SIGN_INDEX[e.sign], cfg.note, cfg.octave, vel, detune);
+            const tOff = setTimeout(
+              () => midiRef.current?.noteOff(SIGN_INDEX[e.sign], cfg.note, cfg.octave),
+              delayMs + hold * 1000,
+            );
+            orbitRef.current.timeouts.push(tOff);
+          }
+        },
+        period,
+        `+${phase.toFixed(3)}`,
+      );
+      orbitRef.current.events.push(id);
+    });
+    orbitRef.current.on = true;
+    applyAdaptiveVoicing(
+      eng,
+      Math.max(1, Math.round(entries.length * TUNING.orbitDuty)),
+    );
+    setOrbit(true);
+    setStatus("playing");
+  }, [ensureEngine, stopOrbit, stopNatalPlayback, updateKeyActive, spawnOrbitVisual]);
 
   const toggleShadow = useCallback(async () => {
     const eng = await ensureEngine();
@@ -2425,113 +1904,125 @@ export default function App() {
     [applyListenPreset],
   );
 
-  // Pure chart computation — reused for both Chart A and Chart B
-  const computeChart = useCallback(async (date, time, lat, lng) => {
-    if (!date) return null;
-
-    const { Origin, Horoscope } = await getHoroscope();
-
-    const [year, month, day] = date.split("-").map(Number);
-    let hour = 12,
-      minute = 0;
-    if (time) {
-      [hour, minute] = time.split(":").map(Number);
-    }
-
-    const latitude = parseFloat(lat) || 0;
-    const longitude = parseFloat(lng) || 0;
-
-    const origin = new Origin({
-      year,
-      month: month - 1,
-      date: day,
-      hour,
-      minute,
-      latitude,
-      longitude,
-    });
-
-    const chart = new Horoscope({
-      origin,
-      houseSystem: "whole-sign",
-      zodiac: "tropical",
-      aspectPoints: ["bodies", "points", "angles"],
-      aspectWithPoints: ["bodies", "points", "angles"],
-      aspectTypes: ["major"],
-      language: "en",
-    });
-
-    const bodyMap = {
-      Sun: "sun",
-      Moon: "moon",
-      Mercury: "mercury",
-      Venus: "venus",
-      Mars: "mars",
-      Jupiter: "jupiter",
-      Saturn: "saturn",
-      Uranus: "uranus",
-      Neptune: "neptune",
-      Pluto: "pluto",
-      Chiron: "chiron",
-    };
-
-    const activations = {};
-
-    for (const [label, bodyKey] of Object.entries(bodyMap)) {
-      const body = chart.CelestialBodies[bodyKey];
-      if (!body) continue;
-      const signName = body.Sign.label;
-      const signKey = SIGNS_BY_LOWERCASE[signName.toLowerCase()];
-      if (!signKey) continue;
-      const degree = body.ChartPosition.Ecliptic.DecimalDegrees % 30;
-      const detune = (degree - 15) * TUNING.centsPerDegree;
-      if (!activations[signKey])
-        activations[signKey] = { planets: [], detuneCents: detune };
-      activations[signKey].planets.push(label);
-    }
-
-    let ascKey = null;
-    if (time && chart.Ascendant?.Sign) {
-      const ascSign = chart.Ascendant.Sign.label;
-      ascKey = SIGNS_BY_LOWERCASE[ascSign.toLowerCase()];
-      if (ascKey) {
-        const degree =
-          chart.Ascendant.ChartPosition.Ecliptic.DecimalDegrees % 30;
-        const detune = (degree - 15) * TUNING.centsPerDegree;
-        if (!activations[ascKey])
-          activations[ascKey] = { planets: [], detuneCents: detune };
-        activations[ascKey].planets.push("Ascendant");
-      }
-    }
-
-    const bodies = {};
-    for (const [label, bodyKey] of Object.entries(bodyMap)) {
-      const body = chart.CelestialBodies[bodyKey];
-      if (!body) continue;
-      const signName = body.Sign.label;
-      const signKey = SIGNS_BY_LOWERCASE[signName.toLowerCase()];
-      if (!signKey) continue;
-      bodies[label] = {
-        sign: signKey,
-        degree: body.ChartPosition.Ecliptic.DecimalDegrees % 30,
-      };
-    }
-    if (ascKey) {
-      bodies["Ascendant"] = {
-        sign: ascKey,
-        degree: chart.Ascendant.ChartPosition.Ecliptic.DecimalDegrees % 30,
-      };
-    }
-
-    return { activations, bodies, hasTime: !!time };
+  const selectChain = useCallback((key) => {
+    activeChainRef.current = key;
+    setActiveChain(key);
+    engineRef.current?.rewireChain(key);
   }, []);
 
+  const chainHandlers = useMemo(
+    () => Object.fromEntries(CHAIN_KEYS.map((k) => [k, () => selectChain(k)])),
+    [selectChain],
+  );
+
+  const toggleRecord = useCallback(async () => {
+    const eng = await ensureEngine();
+    if (!eng.recorder) return;
+    if (!recordingRef.current) {
+      eng.recorder.start();
+      recordingRef.current = true;
+      setRecording(true);
+    } else {
+      const blob = await eng.recorder.stop();
+      recordingRef.current = false;
+      setRecording(false);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `celezdial-${Date.now()}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }, [ensureEngine]);
+
+  const togglePerform = useCallback(() => {
+    setPerform((prev) => {
+      const next = !prev;
+      if (next) {
+        rootRef.current?.requestFullscreen?.().catch(() => {});
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onFs = () => {
+      if (!document.fullscreenElement) setPerform(false);
+    };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  // MIDI out pill — off → each output → off. Access requested on first tap.
+  const cycleMidi = useCallback(async () => {
+    try {
+      if (!midiRef.current) midiRef.current = new MidiOut();
+      const outs = await midiRef.current.init();
+      if (!outs.length) {
+        setMidiLabel("midi: none found");
+        return;
+      }
+      const cur = midiRef.current.output;
+      const idx = outs.indexOf(cur);
+      const next =
+        cur === null ? outs[0] : idx + 1 < outs.length ? outs[idx + 1] : null;
+      midiRef.current.setOutput(next);
+      setMidiLabel(next ? `midi: ${next.name}` : "midi: off");
+    } catch {
+      setMidiLabel("midi: denied");
+    }
+  }, []);
+
+  // QWERTY play — awsedftgyhuj mirrors the 12 keys, piano-style
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const t = e.target;
+      if (
+        t &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      )
+        return;
+      const sign = KEY_TO_SIGN[e.key?.toLowerCase?.()];
+      if (sign) {
+        e.preventDefault();
+        toggleSign(sign);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSign]);
+
+  // Transit fill — the current sky as a chart. Positions barely depend on
+  // location (only the Ascendant does), so no geolocation prompt; add a
+  // city for the rising sign.
+  const fillNowA = useCallback(() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    setNatalDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setNatalTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+  }, []);
+
+  const fillNowB = useCallback(() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    setNatalDateB(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setNatalTimeB(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+  }, []);
+
+  const cityCacheRef = useRef(new Map());
   const fetchCitySuggestions = async (query) => {
+    const cache = cityCacheRef.current;
+    if (cache.has(query)) return cache.get(query);
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`,
-      { headers: { Referer: "https://celezdial-selekta.app" } },
     );
-    return res.json();
+    const json = await res.json();
+    if (cache.size > 50) cache.clear();
+    cache.set(query, json);
+    return json;
   };
 
   const selectCity = (result, setLat, setLng, setQuery, setSuggestions, setHighlight, selectedRef) => {
@@ -2605,13 +2096,17 @@ export default function App() {
         const na = result ? result.activations : {};
         natalActivationsRef.current = na;
         setNatalActivations(na);
+        setBodiesA(result ? result.bodies : {});
+        setAspectsA(result ? result.aspects : []);
       } else {
         natalActivationsRef.current = {};
         setNatalActivations({});
+        setBodiesA({});
+        setAspectsA([]);
       }
     }, 300);
     return () => clearTimeout(natalDebounceARef.current);
-  }, [natalDate, natalTime, natalLat, natalLng, computeChart]);
+  }, [natalDate, natalTime, natalLat, natalLng]);
 
   useEffect(() => {
     clearTimeout(natalDebounceBRef.current);
@@ -2623,19 +2118,23 @@ export default function App() {
         const nb = result ? result.activations : {};
         natalActivationsBRef.current = nb;
         setNatalActivationsB(nb);
+        setBodiesB(result ? result.bodies : {});
+        setAspectsB(result ? result.aspects : []);
       } else {
         natalActivationsBRef.current = {};
         setNatalActivationsB({});
+        setBodiesB({});
+        setAspectsB([]);
       }
     }, 300);
     return () => clearTimeout(natalDebounceBRef.current);
-  }, [natalDateB, natalTimeB, natalLatB, natalLngB, computeChart]);
+  }, [natalDateB, natalTimeB, natalLatB, natalLngB]);
 
   return (
     <>
       <style>{CSS}</style>
       <div
-        className={`cel-root${shadow ? " cel-eclipse-active" : ""}`}
+        className={`cel-root${shadow ? " cel-eclipse-active" : ""}${perform ? " cel-perform" : ""}`}
         ref={rootRef}
       >
         <canvas className="cel-emanation" ref={emanationRef} />
@@ -2647,9 +2146,15 @@ export default function App() {
         />
 
 
+        {!perform && (
         <div className="cel-natal cel-natal-dual">
           <div className="cel-natal-body">
-            <div className="cel-natal-chart-label" style={STYLE_CHART_A}>Chart A</div>
+            <div className="cel-natal-chart-label" style={STYLE_CHART_A}>
+              Chart A
+              <button type="button" className="cel-now-btn" onClick={fillNowA} title="Fill with the current sky — natal vs transits">
+                now
+              </button>
+            </div>
             <div className="cel-natal-inputs">
               <label className="cel-natal-field cel-pinned">
                 <span>Birth date</span>
@@ -2700,7 +2205,12 @@ export default function App() {
           </div>
 
           <div className="cel-natal-body">
-            <div className="cel-natal-chart-label" style={STYLE_CHART_B}>Chart B</div>
+            <div className="cel-natal-chart-label" style={STYLE_CHART_B}>
+              Chart B
+              <button type="button" className="cel-now-btn" onClick={fillNowB} title="Fill with the current sky — natal vs transits">
+                now
+              </button>
+            </div>
             <div className="cel-natal-inputs">
               <label className="cel-natal-field cel-pinned">
                 <span>Birth date</span>
@@ -2759,6 +2269,14 @@ export default function App() {
               >
                 {anyActive ? "Pause" : "Play"}
               </button>
+              <button
+                type="button"
+                className={`cel-btn cel-orbit-btn${orbit ? " cel-orbit-active" : ""}`}
+                onClick={toggleOrbit}
+                title="Voices breathe on their ruling planets' orbital periods"
+              >
+                Orbit
+              </button>
             </div>
           )}
 
@@ -2815,6 +2333,72 @@ export default function App() {
                 </div>
               </div>
             )}
+            {(synastryAspects.length > 0 || aspectsA.length > 0 || aspectsB.length > 0) && (
+              <div className="cel-natal-info-section">
+                {synastryAspects.length > 0 && (
+                  <>
+                    <div className="cel-natal-section-header cel-natal-shared-header">
+                      {synastryAspects.length} cross-chart {synastryAspects.length === 1 ? "aspect" : "aspects"}
+                    </div>
+                    <div className="cel-natal-grid">
+                      {synastryAspects.map((a) => (
+                        <span
+                          key={`syn-${a.p1}-${a.key}-${a.p2}`}
+                          className={`cel-aspect cel-aspect-${ASPECTS[a.key].quality}`}
+                        >
+                          <span style={STYLE_CHART_A}>{BODY_GLYPHS[a.p1] || a.p1}</span>
+                          {" "}{ASPECTS[a.key].glyph}{" "}
+                          <span style={STYLE_CHART_B}>{BODY_GLYPHS[a.p2] || a.p2}</span>
+                          <span className="cel-aspect-orb"> {a.orb.toFixed(1)}°</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {aspectsA.length > 0 && (
+                  <>
+                    <div className="cel-natal-section-header" style={STYLE_CHART_A}>
+                      Chart A aspects
+                    </div>
+                    <div className="cel-natal-grid">
+                      {aspectsA.map((a) => (
+                        <span
+                          key={`a-${a.p1}-${a.key}-${a.p2}`}
+                          className={`cel-aspect cel-aspect-${ASPECTS[a.key].quality}`}
+                        >
+                          {BODY_GLYPHS[a.p1] || a.p1} {ASPECTS[a.key].glyph}{" "}
+                          {BODY_GLYPHS[a.p2] || a.p2}
+                          <span className="cel-aspect-orb"> {a.orb.toFixed(1)}°</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {aspectsB.length > 0 && (
+                  <>
+                    <div className="cel-natal-section-header" style={STYLE_CHART_B}>
+                      Chart B aspects
+                    </div>
+                    <div className="cel-natal-grid">
+                      {aspectsB.map((a) => (
+                        <span
+                          key={`b-${a.p1}-${a.key}-${a.p2}`}
+                          className={`cel-aspect cel-aspect-${ASPECTS[a.key].quality}`}
+                        >
+                          {BODY_GLYPHS[a.p1] || a.p1} {ASPECTS[a.key].glyph}{" "}
+                          {BODY_GLYPHS[a.p2] || a.p2}
+                          <span className="cel-aspect-orb"> {a.orb.toFixed(1)}°</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <p className="cel-natal-context">
+                  Aspects color the voices: trines and sextiles lift, squares
+                  and oppositions detune, conjunctions focus.
+                </p>
+              </div>
+            )}
             <div className="cel-natal-legend">
               {Object.entries(BODY_GLYPHS).map(([name, glyph]) => (
                 <span key={name} className="cel-legend-item">{glyph} {name}</span>
@@ -2823,7 +2407,9 @@ export default function App() {
           </div>
           )}
         </div>
+        )}
 
+        {!perform && (
         <details className="cel-veil">
           <summary className="cel-oracle">
             {/* <span className="cel-oracle-line">.</span>
@@ -2910,6 +2496,18 @@ export default function App() {
               ),
             )}
           </div>
+          <div className="cel-chains">
+            {CHAIN_KEYS.map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={`cel-listen-pill${activeChain === key ? " cel-listen-active" : ""}`}
+                onClick={chainHandlers[key]}
+              >
+                {key}
+              </button>
+            ))}
+          </div>
           <div className="cel-listen">
             {Object.entries(LISTEN_PRESETS).map(([key, preset]) => (
               <button
@@ -2921,6 +2519,16 @@ export default function App() {
                 {preset.label}
               </button>
             ))}
+            {midiSupported() && (
+              <button
+                type="button"
+                className={`cel-listen-pill${midiRef.current?.output ? " cel-listen-active" : ""}`}
+                onClick={cycleMidi}
+                title="Chart A drives hardware: one channel per sign, detune as pitch bend"
+              >
+                {midiLabel}
+              </button>
+            )}
           </div>
           <div className="cel-veil-actions">
             <button
@@ -2944,14 +2552,65 @@ export default function App() {
             >
               {copyFeedback ? "Copied!" : "Copy"}
             </button>
+            <button
+              type="button"
+              className="cel-btn cel-snapshot-btn"
+              onClick={() => loadInputRef.current?.click()}
+            >
+              Load
+            </button>
+            <button
+              type="button"
+              className="cel-btn cel-snapshot-btn"
+              onClick={shareLink}
+              title="Copy a link that carries this whole state — charts included, in the URL fragment only"
+            >
+              {linkFeedback ? "Linked!" : "Link"}
+            </button>
+            {CAN_RECORD && (
+              <button
+                type="button"
+                className={`cel-btn cel-snapshot-btn${recording ? " cel-record-active" : ""}`}
+                onClick={toggleRecord}
+              >
+                {recording ? "■ Stop" : "● Record"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="cel-btn cel-snapshot-btn"
+              onClick={togglePerform}
+            >
+              Perform
+            </button>
+            <input
+              ref={loadInputRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={loadSnapshotFile}
+            />
           </div>
         </details>
+        )}
 
+        {perform && (
+          <button
+            type="button"
+            className="cel-perform-exit"
+            onClick={togglePerform}
+            aria-label="Exit performance mode"
+          >
+            ✕
+          </button>
+        )}
       </div>
-      <div className="cel-footer">
-        <p>v12 &middot; 12&times;2 &middot; 44.1kHz</p>
-        <h1 className="cel-title">celezdial selekta</h1>
-      </div>
+      {!perform && (
+        <div className="cel-footer">
+          <p>v14 &middot; 12&times;2 &middot; 44.1kHz</p>
+          <h1 className="cel-title">celezdial selekta</h1>
+        </div>
+      )}
     </>
   );
 }
@@ -3784,6 +3443,145 @@ const CSS = `
     .cel-group-row { flex-direction: column; }
     .cel-key-bodies { font-size: 0.45rem; }
     .cel-body-glyph { font-size: 0.45rem; }
+  }
+
+  /* ── Playback row: Play + Orbit ─────────────────────── */
+
+  .cel-playback-controls {
+    gap: 0.5rem;
+  }
+
+  .cel-natal-play {
+    flex: 1;
+    width: auto;
+  }
+
+  .cel-orbit-btn {
+    border-color: rgba(60, 168, 212, 0.2);
+    padding: 0.6rem 1.2rem;
+  }
+
+  .cel-orbit-btn:hover:not(:disabled) {
+    background: rgba(60, 168, 212, 0.08);
+    border-color: rgba(60, 168, 212, 0.4);
+    box-shadow: none;
+  }
+
+  .cel-orbit-active {
+    background: rgba(60, 168, 212, 0.14);
+    border-color: rgba(60, 168, 212, 0.55);
+    box-shadow: 0 0 14px rgba(60, 168, 212, 0.25);
+  }
+
+  /* ── Now buttons (transits) ─────────────────────────── */
+
+  .cel-now-btn {
+    background: none;
+    border: 1px solid rgba(180, 140, 255, 0.2);
+    border-radius: 6px;
+    color: #8878a0;
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    margin-left: 8px;
+    cursor: pointer;
+    vertical-align: middle;
+  }
+
+  .cel-now-btn:hover {
+    color: #d8d0e8;
+    border-color: rgba(180, 140, 255, 0.45);
+  }
+
+  /* ── Aspects ────────────────────────────────────────── */
+
+  .cel-aspect {
+    font-size: 11px;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+
+  .cel-aspect-orb {
+    color: #605878;
+    font-size: 10px;
+  }
+
+  .cel-aspect-consonant { color: #8fb89f; }
+  .cel-aspect-tense { color: #c98f7a; }
+  .cel-aspect-focal { color: #b8a0d8; }
+
+  /* ── Chain pills ────────────────────────────────────── */
+
+  .cel-chains {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: center;
+    margin-bottom: 0.8rem;
+    contain: layout;
+  }
+
+  /* ── Record ─────────────────────────────────────────── */
+
+  .cel-record-active {
+    opacity: 1;
+    border-color: rgba(255, 80, 60, 0.6);
+    color: #ff9080;
+    animation: cel-rec-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes cel-rec-pulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(255, 80, 60, 0.2); }
+    50% { box-shadow: 0 0 14px rgba(255, 80, 60, 0.5); }
+  }
+
+  /* ── Perform mode — keyboard + emanation only ───────── */
+
+  .cel-perform {
+    justify-content: center;
+  }
+
+  .cel-perform .cel-keyboard {
+    max-width: 900px;
+    height: 220px;
+  }
+
+  .cel-perform-exit {
+    position: fixed;
+    top: 12px;
+    right: 14px;
+    z-index: 20;
+    background: none;
+    border: none;
+    color: #504868;
+    font-size: 1.1rem;
+    cursor: pointer;
+    opacity: 0.5;
+  }
+
+  .cel-perform-exit:hover {
+    opacity: 1;
+    color: #d8d0e8;
+  }
+
+  /* ── QWERTY hints on keys ───────────────────────────── */
+
+  .cel-key-kbd {
+    font-size: 0.5rem;
+    color: #504868;
+    font-family: ${FONTS.mono};
+  }
+
+  @media (hover: none) {
+    .cel-key-kbd { display: none; }
+  }
+
+  /* ── Knob keyboard focus ────────────────────────────── */
+
+  .cel-knob-svg:focus-visible {
+    outline: 1px solid rgba(180, 140, 255, 0.5);
+    border-radius: 50%;
   }
 
   @media (prefers-reduced-motion: reduce) {
