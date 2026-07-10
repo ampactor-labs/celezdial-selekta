@@ -153,6 +153,26 @@ export const TUNING = {
 
   // ── Microtonal system (Lionel's chromatic-calendar) ──
   centsPerDegree: 100 / 30,  // 3.33 — Lionel's system: 100 cents per 30° sign
+
+  // ── Aspect sonification ──
+  // Aspects modulate the voices of the signs their bodies occupy.
+  // Consonant aspects (trine, sextile) lift velocity; conjunctions focus it.
+  // Tense aspects (square, opposition) shift the later-arriving voice by
+  // aspectTensionCents when its partner is already sounding — heard as
+  // interval roughness through the Chebyshev intermodulation.
+  aspectConsonantBoost: 0.03, // velocity multiplier bump per consonant aspect
+  aspectFocalBoost: 0.04,     // velocity bump per conjunction
+  aspectBoostCap: 0.1,        // max total velocity lift per sign
+  aspectTensionCents: 4,      // detune offset for tense-aspect pairs
+
+  // ── Orbit mode ──
+  // Each chart-active voice swells and fades on a cycle. Period comes from
+  // the ruling planet's orbital days, log-mapped into human time — the
+  // Cousto move applied to rhythm instead of pitch. Moon breathes fastest,
+  // Saturn slowest.
+  orbitPeriodMin: 16, // seconds — fastest voice cycle (Moon)
+  orbitPeriodMax: 88, // seconds — slowest voice cycle (Saturn)
+  orbitDuty: 0.45,    // fraction of the cycle a voice holds before release
 };
 
 // ─── Oscillator Types ────────────────────────────────────────
@@ -576,6 +596,33 @@ export const BODY_GLYPHS = {
   Pluto: "\u2647",     // ♇
   Chiron: "\u26B7",    // ⚷
   Ascendant: "AC",
+};
+
+// ─── Major Aspects ───────────────────────────────────────────
+// Angular relationships between bodies. orb = allowed deviation for
+// within-chart aspects (matches the library's defaults); synOrb = tighter
+// allowance for cross-chart (synastry) aspects we compute ourselves.
+// quality drives sonification: consonant lifts velocity, tense detunes,
+// focal intensifies.
+export const ASPECTS = {
+  conjunction: { angle: 0,   orb: 8, synOrb: 6, glyph: "☌", quality: "focal" },     // ☌
+  opposition:  { angle: 180, orb: 8, synOrb: 6, glyph: "☍", quality: "tense" },     // ☍
+  trine:       { angle: 120, orb: 7, synOrb: 5, glyph: "△", quality: "consonant" }, // △
+  square:      { angle: 90,  orb: 7, synOrb: 5, glyph: "□", quality: "tense" },     // □
+  sextile:     { angle: 60,  orb: 5, synOrb: 4, glyph: "⚹", quality: "consonant" }, // ⚹
+};
+
+// ─── Planetary Orbital Periods (days) ────────────────────────
+// Sun listed at the apparent (geocentric) year. Orbit mode log-maps the
+// traditional-ruler range (Moon..Saturn) into orbitPeriodMin..Max seconds.
+export const PLANET_ORBIT_DAYS = {
+  Moon: 27.32,
+  Mercury: 87.97,
+  Venus: 224.7,
+  Sun: 365.25,
+  Mars: 686.98,
+  Jupiter: 4332.59,
+  Saturn: 10759.22,
 };
 
 export const PLANETARY_CHARACTER = {

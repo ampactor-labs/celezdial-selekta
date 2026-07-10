@@ -113,6 +113,17 @@ export const TUNING = {
   // echoSatDrive * delayFeedback = 0.45 * 0.55 = 0.2475 — safe
   echoSatDrive: 0.45, // gentle saturation in echo loop
   echoInputGain: 0.5, // attenuated — the sum can get dense with long release
+
+  // ── Aspect sonification ──
+  aspectConsonantBoost: 0.03, // velocity bump per consonant aspect
+  aspectFocalBoost: 0.04,     // velocity bump per conjunction
+  aspectBoostCap: 0.1,       // max total velocity lift per sign
+  aspectTensionCents: 5,      // detune offset for tense-aspect pairs
+
+  // ── Orbit mode ──
+  orbitPeriodMin: 20, // seconds — fastest voice cycle (Moon)
+  orbitPeriodMax: 110, // seconds — slowest voice cycle (Saturn)
+  orbitDuty: 0.5,    // fraction of the cycle a voice holds before release
 };
 
 // ─── Shadow / Eclipse Mode — Cosmic Horror ──────────────────

@@ -98,6 +98,17 @@ export const TUNING = {
   // echoSatDrive * delayFeedback = 0.5 * 0.4 = 0.20 — well under 1.0
   echoSatDrive: 0.5,
   echoInputGain: 0.6,  // lower input gain for cleaner signal
+
+  // ── Aspect sonification ──
+  aspectConsonantBoost: 0.04, // velocity bump per consonant aspect
+  aspectFocalBoost: 0.05,     // velocity bump per conjunction
+  aspectBoostCap: 0.12,       // max total velocity lift per sign
+  aspectTensionCents: 3,      // detune offset for tense-aspect pairs
+
+  // ── Orbit mode ──
+  orbitPeriodMin: 12, // seconds — fastest voice cycle (Moon)
+  orbitPeriodMax: 64, // seconds — slowest voice cycle (Saturn)
+  orbitDuty: 0.4,    // fraction of the cycle a voice holds before release
 };
 
 // ─── Shadow / Eclipse Mode: "Shattered Prism" ───────────────

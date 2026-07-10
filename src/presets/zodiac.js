@@ -114,6 +114,17 @@ export const TUNING = {
   // echo accumulation.
   echoSatDrive: 0.9,
   echoInputGain: 0.8,
+
+  // ── Aspect sonification ──
+  aspectConsonantBoost: 0.03, // velocity bump per consonant aspect
+  aspectFocalBoost: 0.04,     // velocity bump per conjunction
+  aspectBoostCap: 0.1,       // max total velocity lift per sign
+  aspectTensionCents: 4,      // detune offset for tense-aspect pairs
+
+  // ── Orbit mode ──
+  orbitPeriodMin: 16, // seconds — fastest voice cycle (Moon)
+  orbitPeriodMax: 88, // seconds — slowest voice cycle (Saturn)
+  orbitDuty: 0.45,    // fraction of the cycle a voice holds before release
 };
 
 // ─── Eclipse / Shadow ────────────────────────────────────────
