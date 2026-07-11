@@ -84,7 +84,12 @@ export async function computeChart(date, time, lat, lng) {
     if (!activations[signKey])
       activations[signKey] = { planets: [], detuneCents: detune };
     activations[signKey].planets.push(label);
-    bodies[label] = { sign: signKey, degree, longitude: absolute };
+    bodies[label] = {
+      sign: signKey,
+      degree,
+      longitude: absolute,
+      retro: !!body.isRetrograde,
+    };
   }
 
   if (time && chart.Ascendant?.Sign) {

@@ -127,6 +127,50 @@ const SHARP_KEY_STYLES = SHARP_POSITIONS.map((left) => ({ left }));
 const SIGN_INDEX = Object.fromEntries(KEYBOARD_ORDER.map((s, i) => [s, i]));
 const CAN_RECORD = typeof MediaRecorder !== "undefined";
 const CHAIN_KEYS = Object.keys(CHAINS).filter((k) => k !== "custom");
+
+// Degrees in astrologer notation: 10.3 → 10°18′
+function fmtDeg(d) {
+  let deg = Math.floor(d);
+  let min = Math.round((d - deg) * 60);
+  if (min === 60) {
+    deg += 1;
+    min = 0;
+  }
+  return `${deg}°${String(min).padStart(2, "0")}′`;
+}
+
+// Info-panel placement string: "☉ 10°18′℞  ♀ 24°06′"
+function planetsWithDegrees(planets, bodies) {
+  return planets
+    .map((p) => {
+      const b = bodies?.[p];
+      const g = BODY_GLYPHS[p] || p;
+      return b ? `${g} ${fmtDeg(b.degree)}${b.retro ? "℞" : ""}` : g;
+    })
+    .join("  ");
+}
+
+// Hover text for a key: the voice's fixed identity, then any chart
+// placements with their degrees.
+function keyTitle(sign, hasA, hasB, bodiesA, bodiesB) {
+  const cfg = SIGN_CHARACTER[sign];
+  const lines = [
+    `${sign} · ${cfg.note}${cfg.octave} · ${SIGN_RULERS[sign]} ${cfg.oscType} · ${cfg.detuneCents > 0 ? "+" : ""}${cfg.detuneCents}¢ Cousto`,
+  ];
+  const placements = (label, planets, bodies) => {
+    if (!planets) return;
+    const parts = planets.planets.map((p) => {
+      const b = bodies?.[p];
+      return b
+        ? `${p} ${fmtDeg(b.degree)}${b.retro ? " ℞" : ""}`
+        : p;
+    });
+    lines.push(`${label}: ${parts.join(", ")}`);
+  };
+  placements("A", hasA, bodiesA);
+  placements("B", hasB, bodiesB);
+  return lines.join("\n");
+}
 // ─── Device-aware listen preset detection ─────────────────────
 const DETECTED_LISTEN_PRESET = (() => {
   if (typeof window === "undefined") return "headphones";
@@ -462,6 +506,8 @@ if (typeof window !== 'undefined') {
 const KeyboardSection = React.memo(function KeyboardSection({
   natalActivations,
   natalActivationsB,
+  bodiesA,
+  bodiesB,
   onClick,
   keyRefCallbacks,
 }) {
@@ -478,6 +524,7 @@ const KeyboardSection = React.memo(function KeyboardSection({
             ref={keyRefCallbacks[sign]}
             className={`cel-key cel-key-natural${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
             data-sign={sign}
+            title={keyTitle(sign, hasChartA, hasChartB, bodiesA, bodiesB)}
           >
             {(hasChartA || hasChartB) && (
               <span className="cel-chart-dots">
@@ -514,6 +561,7 @@ const KeyboardSection = React.memo(function KeyboardSection({
             className={`cel-key cel-key-sharp${hasChartA && hasChartB ? " cel-key-shared" : ""}`}
             style={SHARP_KEY_STYLES[i]}
             data-sign={sign}
+            title={keyTitle(sign, hasChartA, hasChartB, bodiesA, bodiesB)}
           >
             {(hasChartA || hasChartB) && (
               <span className="cel-chart-dots">
@@ -2217,9 +2265,61 @@ export default function App() {
         <KeyboardSection
           natalActivations={natalActivations}
           natalActivationsB={natalActivationsB}
+          bodiesA={bodiesA}
+          bodiesB={bodiesB}
           onClick={handleKeyboardClick}
           keyRefCallbacks={keyRefCallbacks}
         />
+
+        {!perform && (
+          <details className="cel-meaning">
+            <summary className="cel-meaning-summary">
+              . . &nbsp;w h a t &nbsp;a m &nbsp;i &nbsp;h e a r i n g&nbsp; . .
+            </summary>
+            <div className="cel-meaning-body">
+              <p>
+                The twelve signs are the twelve notes of the chromatic scale,
+                C through B. That mapping is Lionel Williams' chromatic
+                calendar: the zodiac year laid over one octave, with Aquarius
+                at C and Aries, the spring equinox, at D.
+              </p>
+              <p>
+                Enter a birth and every planet lights the sign it occupies.
+                Each lit key plays its sign's note. The Sun and Moon come in
+                loudest, Jupiter and Saturn sit low in the mix, and each sign
+                keeps its ruling planet's temperament: Mars signs attack fast
+                and saw-edged, Saturn signs bloom slowly.
+              </p>
+              <p>
+                Where a planet sits inside its sign bends the tuning. The
+                first degree sounds 50 cents flat, the middle is true, the
+                last degree 50 cents sharp. Two people with the Sun in the
+                same sign play two tunings of one note, and the slow shimmer
+                between them is the distance between their charts.
+              </p>
+              <p>
+                Aspects, the angles between planets, color the mix. A trine
+                or sextile lifts its voices. A square or opposition pulls one
+                of the pair a few cents off pitch, so the two grind quietly
+                against each other. A conjunction stacks planets on a single
+                voice and it steps forward.
+              </p>
+              <p>
+                Underneath it all, every note carries its ruling planet's
+                Cousto tone at half strength: the planet's orbital period,
+                octave-doubled up into pitch. Orbit mode does the same thing
+                to time. Each voice swells and fades at its planet's pace,
+                the Moon in seconds, Saturn in minutes, so the chord never
+                repeats itself.
+              </p>
+              <p className="cel-meaning-system">
+                tropical zodiac · whole-sign · traditional rulers · Sun
+                through Pluto, Chiron, Ascendant · 100 cents per sign ·
+                Cousto tuning ×0.5
+              </p>
+            </div>
+          </details>
+        )}
 
 
         {!perform && (
@@ -2227,7 +2327,7 @@ export default function App() {
           <div className="cel-natal-body">
             <div className="cel-natal-chart-label" style={STYLE_CHART_A}>
               Chart A
-              <button type="button" className="cel-now-btn" onClick={fillNowA} title="Fill with the current sky — natal vs transits">
+              <button type="button" className="cel-now-btn" onClick={fillNowA} title="Fill with the sky right now. Birth chart in A against now in B is a transit reading.">
                 now
               </button>
             </div>
@@ -2283,7 +2383,7 @@ export default function App() {
           <div className="cel-natal-body">
             <div className="cel-natal-chart-label" style={STYLE_CHART_B}>
               Chart B
-              <button type="button" className="cel-now-btn" onClick={fillNowB} title="Fill with the current sky — natal vs transits">
+              <button type="button" className="cel-now-btn" onClick={fillNowB} title="Fill with the sky right now. Birth chart in A against now in B is a transit reading.">
                 now
               </button>
             </div>
@@ -2359,9 +2459,16 @@ export default function App() {
           {/* Info panel — shared signs first, then unique per chart */}
           {infoPanelSigns.hasAny && (
           <div className="cel-natal-info-panel">
-            {infoPanelSigns.hasBoth && (
+            {infoPanelSigns.hasBoth ? (
               <p className="cel-natal-context">
-                Two birth charts compared. Shared signs play both voices together.
+                Two charts at once. A shared sign plays both tunings of its
+                note, and the beat between them is how far apart the two
+                charts sit in that sign.
+              </p>
+            ) : (
+              <p className="cel-natal-context">
+                Each planet plays the note of its sign, tuned by its exact
+                degree. Play sounds the whole chart at once.
               </p>
             )}
             {infoPanelSigns.shared.length > 0 && (
@@ -2373,9 +2480,9 @@ export default function App() {
                   {infoPanelSigns.shared.map(sign => (
                     <span key={sign} className="cel-natal-item cel-natal-shared">
                       {SIGNS[sign].glyph} {sign}:
-                      <span style={STYLE_CHART_A}> {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
+                      <span style={STYLE_CHART_A}> {planetsWithDegrees(natalActivations[sign].planets, bodiesA)}</span>
                       {" · "}
-                      <span style={STYLE_CHART_B}>{natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}</span>
+                      <span style={STYLE_CHART_B}>{planetsWithDegrees(natalActivationsB[sign].planets, bodiesB)}</span>
                     </span>
                   ))}
                 </div>
@@ -2384,12 +2491,12 @@ export default function App() {
             {infoPanelSigns.onlyA.length > 0 && (
               <div className="cel-natal-info-section">
                 <div className="cel-natal-section-header" style={STYLE_CHART_A}>
-                  Chart A{natalDate ? ` — ${natalDate}` : ""}{infoPanelSigns.onlyA.length < infoPanelSigns.keysA.length ? ` (${infoPanelSigns.onlyA.length} unique)` : ""}
+                  Chart A{natalDate ? ` · ${natalDate}` : ""}{infoPanelSigns.onlyA.length < infoPanelSigns.keysA.length ? ` (${infoPanelSigns.onlyA.length} unique)` : ""}
                 </div>
                 <div className="cel-natal-grid">
                   {infoPanelSigns.onlyA.map(sign => (
                     <span key={sign} className="cel-natal-item">
-                      {SIGNS[sign].glyph} {sign}: {natalActivations[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                      {SIGNS[sign].glyph} {sign}: {planetsWithDegrees(natalActivations[sign].planets, bodiesA)}
                     </span>
                   ))}
                 </div>
@@ -2398,12 +2505,12 @@ export default function App() {
             {infoPanelSigns.onlyB.length > 0 && (
               <div className="cel-natal-info-section">
                 <div className="cel-natal-section-header" style={STYLE_CHART_B}>
-                  Chart B{natalDateB ? ` — ${natalDateB}` : ""}{infoPanelSigns.onlyB.length < infoPanelSigns.keysB.length ? ` (${infoPanelSigns.onlyB.length} unique)` : ""}
+                  Chart B{natalDateB ? ` · ${natalDateB}` : ""}{infoPanelSigns.onlyB.length < infoPanelSigns.keysB.length ? ` (${infoPanelSigns.onlyB.length} unique)` : ""}
                 </div>
                 <div className="cel-natal-grid">
                   {infoPanelSigns.onlyB.map(sign => (
                     <span key={sign} className="cel-natal-item">
-                      {SIGNS[sign].glyph} {sign}: {natalActivationsB[sign].planets.map(p => BODY_GLYPHS[p] || p).join(" ")}
+                      {SIGNS[sign].glyph} {sign}: {planetsWithDegrees(natalActivationsB[sign].planets, bodiesB)}
                     </span>
                   ))}
                 </div>
@@ -2470,8 +2577,19 @@ export default function App() {
                   </>
                 )}
                 <p className="cel-natal-context">
-                  Aspects color the voices: trines and sextiles lift, squares
-                  and oppositions detune, conjunctions focus.
+                  <span className="cel-aspect-focal">
+                    {ASPECTS.conjunction.glyph} conjunction
+                  </span>{" "}
+                  stacks a voice ·{" "}
+                  <span className="cel-aspect-consonant">
+                    {ASPECTS.trine.glyph} trine {ASPECTS.sextile.glyph} sextile
+                  </span>{" "}
+                  lift theirs ·{" "}
+                  <span className="cel-aspect-tense">
+                    {ASPECTS.square.glyph} square {ASPECTS.opposition.glyph}{" "}
+                    opposition
+                  </span>{" "}
+                  set the pair beating
                 </p>
               </div>
             )}
@@ -2639,7 +2757,7 @@ export default function App() {
               type="button"
               className="cel-btn cel-snapshot-btn"
               onClick={shareLink}
-              title="Copy a link that carries this whole state — charts included, in the URL fragment only"
+              title="Copy a link that carries the whole state, charts included. Birth data stays in the URL fragment and never reaches a server."
             >
               {linkFeedback ? "Linked!" : "Link"}
             </button>
@@ -2769,6 +2887,52 @@ const CSS = `
 
   .cel-oracle-line {
     display: block;
+  }
+
+  /* ── Meaning veil (what am i hearing) ───────────────── */
+
+  .cel-meaning {
+    max-width: 560px;
+    width: 100%;
+    margin-bottom: 1rem;
+  }
+
+  .cel-meaning-summary {
+    text-align: center;
+    color: #8878a0;
+    font-size: 0.6rem;
+    letter-spacing: 0.3em;
+    line-height: 1.3;
+    cursor: pointer;
+    list-style: none;
+    padding: 4px;
+    opacity: 0.45;
+    transition: opacity 0.3s ease;
+  }
+
+  .cel-meaning-summary::-webkit-details-marker { display: none; }
+
+  .cel-meaning-summary:hover { opacity: 0.75; }
+
+  .cel-meaning[open] > .cel-meaning-summary { opacity: 0.25; }
+
+  .cel-meaning-body {
+    padding: 0.6rem 0.4rem 0.2rem;
+    color: #8878a0;
+    font-size: 0.78rem;
+    line-height: 1.65;
+  }
+
+  .cel-meaning-body p {
+    margin-bottom: 0.7rem;
+  }
+
+  .cel-meaning-system {
+    font-family: ${FONTS.mono};
+    font-size: 0.62rem;
+    color: #504868;
+    letter-spacing: 0.04em;
+    text-align: center;
   }
 
   /* ── Piano keyboard layout ──────────────────────────── */
