@@ -14,9 +14,9 @@
 //                  1:1 to an engine parameter via KNOB_MAP. Shadow
 //                  mode temporarily overrides FX params; when Shadow
 //                  disengages, param values are restored.
-// oscIndex       — 0–7 | null. 0 = fatsine (default). null = per-sign
-//                  planetary defaults. Breathe cycles: 0 → ... → 7 →
-//                  null → 0. When 0–7, all synths share that OSC_TYPES entry.
+// oscIndex       — 0–7 | null. null = dynamic (default): each sign uses
+//                  its ruling planet's oscillator. 0–7 = all synths share
+//                  one OSC_TYPES entry. Breathe cycles null → 0 → ... → 7 → null.
 // shadow         — Boolean. Shadow/Eclipse mode active. Ramps FX
 //                  params toward chaos targets over rampTime seconds.
 // activeChain    — CHAINS key; pills in the veil rewire at runtime.
@@ -583,7 +583,7 @@ export default function App() {
   const [status, setStatus] = useState("idle");
   const [anyActive, setAnyActive] = useState(false);
   const [shadow, setShadow] = useState(false);
-  const [oscIndex, setOscIndex] = useState(0);
+  const [oscIndex, setOscIndex] = useState(null); // null = dynamic (per-sign planetary)
   const [listenPreset, setListenPreset] = useState(DETECTED_LISTEN_PRESET);
   const shadowIntervalsRef = useRef([]);
   const visualStateRef = useRef({});
@@ -591,8 +591,8 @@ export default function App() {
   const rootRef = useRef(null);
   const emanationRef = useRef(null);
   const shadowRef = useRef(false);
-  const pendingOscTypeRef = useRef(OSC_TYPES[0]);
-  const activeOscTypeRef = useRef(OSC_TYPES[0]);
+  const pendingOscTypeRef = useRef("per-sign"); // dynamic default: engine builds per-sign
+  const activeOscTypeRef = useRef(null); // null → spread/detune logic falls back to per-sign type
   const canvasCtxRef = useRef(null);
   const rafIdRef = useRef(null);
   const lastFrameTimeRef = useRef(null);
