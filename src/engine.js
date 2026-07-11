@@ -321,7 +321,10 @@ export async function createEngine(opts = {}) {
 
   const ctx = new Tone.Context({
     latencyHint: "playback",
-    sampleRate: TUNING.sampleRate,
+    // Only pin the rate when a tuning profile asks for one (lo-fi presets);
+    // otherwise run at hardware rate — off-rate contexts resample and lose
+    // the fast audio path on Android.
+    ...(TUNING.sampleRate ? { sampleRate: TUNING.sampleRate } : {}),
     lookAhead: 0.3,
     // 50ms scheduler ticks — half the main-thread timer churn of the old
     // 25ms. Events land on exact audio-clock times regardless; with 300ms
@@ -429,7 +432,10 @@ export async function createEngine(opts = {}) {
     start() {
       if (this._eventId !== null) this.stop();
       if (Tone.Transport.state !== "started") Tone.Transport.start();
-      const tickSec = 0.05;
+      // 10Hz sampling keeps five steps per cycle even with the MOD knob
+      // pinned at its 2Hz max, and half the old 20Hz tick's cross-thread
+      // filter-param writes (the sweep touches 8 comb filters per tick).
+      const tickSec = 0.1;
       this._eventId = Tone.Transport.scheduleRepeat(() => {
         if (this.depth <= 0) return;
         this._phase += 2 * Math.PI * this.rate * tickSec;

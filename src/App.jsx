@@ -2060,6 +2060,18 @@ export default function App() {
           setLng(pos.coords.longitude);
           selectedRef.current = true; // suppress autocomplete fetch
           setQuery("here");
+          // Sync the picker to the real place name (city-level zoom)
+          fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json&zoom=10`,
+          )
+            .then((r) => r.json())
+            .then((j) => {
+              if (j?.display_name) {
+                selectedRef.current = true;
+                setQuery(j.display_name.split(", ").slice(0, 3).join(", "));
+              }
+            })
+            .catch(() => {});
         },
         fallbackToUtc,
         { timeout: 6000, maximumAge: 600000 },
@@ -2671,7 +2683,7 @@ export default function App() {
       </div>
       {!perform && (
         <div className="cel-footer">
-          <p>v14 &middot; 12&times;2 &middot; 44.1kHz</p>
+          <p>v14 &middot; 12&times;2</p>
           <h1 className="cel-title">celezdial selekta</h1>
         </div>
       )}

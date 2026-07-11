@@ -44,7 +44,11 @@
 // Default FX parameter values. These initialize the audio engine.
 // KNOB_DEFS.default references these — single source of truth.
 export const TUNING = {
-  sampleRate: 44100,
+  // null = the device's native rate. Forcing a rate the hardware doesn't
+  // run (Android is 48kHz) makes Chrome insert a resampler AND drops the
+  // context off the fast audio path — jitter and overruns on phones.
+  // Presets that pin a low rate for lo-fi character still can.
+  sampleRate: null,
 
   // ── Envelope (Bloom macro) ──
   // ADSR shape for all PolySynth voices.

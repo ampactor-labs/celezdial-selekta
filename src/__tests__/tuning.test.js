@@ -15,16 +15,19 @@ const ZODIAC_SIGNS = [
 
 describe("TUNING", () => {
   it("has numeric fields", () => {
-    expect(typeof TUNING.sampleRate).toBe("number");
     expect(typeof TUNING.attack).toBe("number");
     expect(typeof TUNING.decay).toBe("number");
     expect(typeof TUNING.sustain).toBe("number");
     expect(typeof TUNING.release).toBe("number");
   });
 
-  it("sampleRate is in valid range", () => {
-    expect(TUNING.sampleRate).toBeGreaterThanOrEqual(22050);
-    expect(TUNING.sampleRate).toBeLessThanOrEqual(96000);
+  it("sampleRate is null (native rate) or a pinned rate in range", () => {
+    if (TUNING.sampleRate != null) {
+      expect(TUNING.sampleRate).toBeGreaterThanOrEqual(8000);
+      expect(TUNING.sampleRate).toBeLessThanOrEqual(96000);
+    } else {
+      expect(TUNING.sampleRate).toBeNull();
+    }
   });
 
   it("stagger defaults to 0.06s for audible ripple", () => {
