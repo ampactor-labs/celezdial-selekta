@@ -2865,6 +2865,15 @@ const CSS = `
     margin: 0;
   }
 
+  /* Pin the veil to the viewport. Without this the details element grows
+     to its widest non-wrapping child (the action row's 7 buttons), which
+     on a phone balloons past the screen and stops every row inside from
+     wrapping. */
+  .cel-veil {
+    width: 100%;
+    max-width: 600px;
+  }
+
   .cel-oracle {
     text-align: center;
     color: #a098b8;
@@ -3221,6 +3230,7 @@ const CSS = `
 
   .cel-listen {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.4rem;
     justify-content: center;
     margin-bottom: 1.5rem;
@@ -3253,6 +3263,7 @@ const CSS = `
 
   .cel-veil-actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
     gap: 0.5rem;
     margin: 0.8rem auto 0;
@@ -3680,7 +3691,6 @@ const CSS = `
     .cel-key-sharp { width: 28px; }
     .cel-key-name { font-size: 8px; }
     .cel-key-glyph { font-size: 14px; }
-    .cel-listen { flex-wrap: wrap; }
     .cel-group-row { flex-direction: column; }
     .cel-key-bodies { font-size: 0.45rem; }
     .cel-body-glyph { font-size: 0.45rem; }
