@@ -655,7 +655,6 @@ export default function App() {
   // orbiting don't accumulate thousands of stale ids
   const orbitRef = useRef({ on: false, events: [], timeouts: new Set() });
   const [perform, setPerform] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
   const [midiLabel, setMidiLabel] = useState("midi: off");
@@ -2036,16 +2035,6 @@ export default function App() {
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
-  // Escape closes the guide overlay
-  useEffect(() => {
-    if (!showGuide) return;
-    const onEsc = (e) => {
-      if (e.key === "Escape") setShowGuide(false);
-    };
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [showGuide]);
-
   // MIDI out pill — off → each output → off. Access requested on first tap.
   const cycleMidi = useCallback(async () => {
     try {
@@ -2274,20 +2263,6 @@ export default function App() {
       >
         <canvas className="cel-emanation" ref={emanationRef} />
 
-        {!perform && (
-          <div className="cel-guidebar">
-            <button
-              type="button"
-              className="cel-guide-btn"
-              onClick={() => setShowGuide(true)}
-              aria-label="What am I hearing? Open the guide"
-            >
-              <span className="cel-guide-q">?</span>
-              <span className="cel-guide-btn-label">what am I hearing?</span>
-            </button>
-          </div>
-        )}
-
         <KeyboardSection
           natalActivations={natalActivations}
           natalActivationsB={natalActivationsB}
@@ -2296,72 +2271,6 @@ export default function App() {
           onClick={handleKeyboardClick}
           keyRefCallbacks={keyRefCallbacks}
         />
-
-        {showGuide && (
-          <div
-            className="cel-guide-overlay"
-            onClick={() => setShowGuide(false)}
-          >
-            <div
-              className="cel-guide-card"
-              role="dialog"
-              aria-modal="true"
-              aria-label="What am I hearing?"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                type="button"
-                className="cel-guide-close"
-                onClick={() => setShowGuide(false)}
-                aria-label="Close"
-              >
-                {"✕"}
-              </button>
-              <h2 className="cel-guide-title">what am I hearing?</h2>
-              <p>
-                The twelve signs are the twelve notes of the chromatic scale,
-                C through B. That mapping is Lionel Williams' chromatic
-                calendar: the zodiac year laid over one octave, with Aquarius
-                at C and Aries, the spring equinox, at D.
-              </p>
-              <p>
-                Enter a birth and every planet lights the sign it occupies.
-                Each lit key plays its sign's note. The Sun and Moon come in
-                loudest, Jupiter and Saturn sit low in the mix, and each sign
-                keeps its ruling planet's temperament: Mars signs attack fast
-                and saw-edged, Saturn signs bloom slowly.
-              </p>
-              <p>
-                Where a planet sits inside its sign bends the tuning. The
-                first degree sounds 50 cents flat, the middle is true, the
-                last degree 50 cents sharp. Two people with the Sun in the
-                same sign play two tunings of one note, and the slow shimmer
-                between them is the distance between their charts.
-              </p>
-              <p>
-                Aspects, the angles between planets, color the mix. A trine
-                or sextile lifts its voices. A square or opposition pulls one
-                of the pair a few cents off pitch, so the two grind quietly
-                against each other. A conjunction stacks planets on a single
-                voice and it steps forward.
-              </p>
-              <p>
-                Underneath it all, every note carries its ruling planet's
-                Cousto tone at half strength: the planet's orbital period,
-                octave-doubled up into pitch. Orbit mode does the same thing
-                to time. Each voice swells and fades at its planet's pace,
-                the Moon in seconds, Saturn in minutes, so the chord never
-                repeats itself.
-              </p>
-              <p className="cel-guide-system">
-                tropical zodiac · whole-sign · traditional rulers · Sun
-                through Pluto, Chiron, Ascendant · 100 cents per sign ·
-                Cousto tuning ×0.5
-              </p>
-            </div>
-          </div>
-        )}
-
 
         {!perform && (
         <div className="cel-natal cel-natal-dual">
@@ -2642,6 +2551,52 @@ export default function App() {
           </div>
           )}
         </div>
+        )}
+
+        {!perform && (
+          <section className="cel-guide" aria-label="What am I hearing?">
+            <h2 className="cel-guide-title">what am I hearing?</h2>
+            <p>
+              The twelve signs are the twelve notes of the chromatic scale,
+              C through B. That mapping is Lionel Williams' chromatic
+              calendar: the zodiac year laid over one octave, with Aquarius
+              at C and Aries, the spring equinox, at D.
+            </p>
+            <p>
+              Enter a birth and every planet lights the sign it occupies.
+              Each lit key plays its sign's note. The Sun and Moon come in
+              loudest, Jupiter and Saturn sit low in the mix, and each sign
+              keeps its ruling planet's temperament: Mars signs attack fast
+              and saw-edged, Saturn signs bloom slowly.
+            </p>
+            <p>
+              Where a planet sits inside its sign bends the tuning. The
+              first degree sounds 50 cents flat, the middle is true, the
+              last degree 50 cents sharp. Two people with the Sun in the
+              same sign play two tunings of one note, and the slow shimmer
+              between them is the distance between their charts.
+            </p>
+            <p>
+              Aspects, the angles between planets, color the mix. A trine
+              or sextile lifts its voices. A square or opposition pulls one
+              of the pair a few cents off pitch, so the two grind quietly
+              against each other. A conjunction stacks planets on a single
+              voice and it steps forward.
+            </p>
+            <p>
+              Underneath it all, every note carries its ruling planet's
+              Cousto tone at half strength: the planet's orbital period,
+              octave-doubled up into pitch. Orbit mode does the same thing
+              to time. Each voice swells and fades at its planet's pace,
+              the Moon in seconds, Saturn in minutes, so the chord never
+              repeats itself.
+            </p>
+            <p className="cel-guide-system">
+              tropical zodiac · whole-sign · traditional rulers · Sun
+              through Pluto, Chiron, Ascendant · 100 cents per sign ·
+              Cousto tuning ×0.5
+            </p>
+          </section>
         )}
 
         {!perform && (
@@ -2939,116 +2894,28 @@ const CSS = `
     display: block;
   }
 
-  /* ── Guide affordance + overlay (what am i hearing) ─── */
+  /* ── Guide (what am i hearing) — always visible ─────── */
 
-  .cel-guidebar {
+  .cel-guide {
     width: 100%;
     max-width: 560px;
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 0.5rem;
-  }
-
-  .cel-guide-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: rgba(180, 140, 255, 0.06);
-    border: 1px solid rgba(180, 140, 255, 0.28);
-    border-radius: 20px;
-    color: #b8a8d8;
-    padding: 0.28rem 0.7rem 0.28rem 0.32rem;
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .cel-guide-btn:hover {
-    background: rgba(180, 140, 255, 0.12);
-    border-color: rgba(180, 140, 255, 0.5);
-    color: #e8dcff;
-  }
-
-  .cel-guide-q {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 17px;
-    height: 17px;
-    border-radius: 50%;
-    background: rgba(180, 140, 255, 0.28);
-    color: #ede4ff;
-    font-weight: 700;
-    font-size: 0.72rem;
-    line-height: 1;
-  }
-
-  .cel-guide-btn-label {
-    letter-spacing: 0.02em;
-  }
-
-  .cel-guide-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.2rem;
-    background: rgba(8, 8, 12, 0.82);
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
-    animation: cel-guide-fade 0.25s ease;
-  }
-
-  @keyframes cel-guide-fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .cel-guide-card {
-    position: relative;
-    width: 100%;
-    max-width: 460px;
-    max-height: 85vh;
-    overflow-y: auto;
-    background: #141018;
-    border: 1px solid rgba(180, 140, 255, 0.22);
-    border-radius: 14px;
-    padding: 1.7rem 1.4rem 1.3rem;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
-  }
-
-  .cel-guide-close {
-    position: absolute;
-    top: 0.55rem;
-    right: 0.7rem;
-    background: none;
-    border: none;
-    color: #6a5e80;
-    font-size: 0.95rem;
-    line-height: 1;
-    cursor: pointer;
-    padding: 4px;
-  }
-
-  .cel-guide-close:hover {
-    color: #d8d0e8;
+    margin: 0 auto 1.5rem;
+    padding: 1.1rem 0 0.2rem;
+    border-top: 1px solid rgba(180, 140, 255, 0.1);
   }
 
   .cel-guide-title {
-    font-size: 0.82rem;
+    font-size: 0.7rem;
     font-weight: 600;
-    letter-spacing: 0.08em;
-    color: #c0b0e0;
-    margin-bottom: 0.9rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(180, 140, 255, 0.5);
+    margin-bottom: 0.8rem;
   }
 
-  .cel-guide-card p {
-    color: #a89cc0;
-    font-size: 0.82rem;
+  .cel-guide p {
+    color: #8878a0;
+    font-size: 0.8rem;
     line-height: 1.7;
     margin-bottom: 0.8rem;
   }
@@ -3056,7 +2923,7 @@ const CSS = `
   .cel-guide-system {
     font-family: ${FONTS.mono};
     font-size: 0.64rem;
-    color: #6a5e80;
+    color: #504868;
     letter-spacing: 0.03em;
     margin-top: 0.3rem;
   }
