@@ -621,7 +621,6 @@ export default function App() {
   const [cityHighlightB, setCityHighlightB] = useState(-1);
   const [natalActivationsB, setNatalActivationsB] = useState({});
   const natalActivationsBRef = useRef({});
-  const [copyFeedback, setCopyFeedback] = useState(false);
   const cityDebounceARef = useRef(null);
   const cityDebounceBRef = useRef(null);
   const cityGenARef = useRef(0);
@@ -767,14 +766,6 @@ export default function App() {
     a.download = `celezdial-snapshot-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [collectSnapshot]);
-
-  const copySnapshot = useCallback(() => {
-    const snap = collectSnapshot();
-    navigator.clipboard.writeText(JSON.stringify(snap, null, 2)).then(() => {
-      setCopyFeedback(true);
-      setTimeout(() => setCopyFeedback(false), 1200);
-    });
   }, [collectSnapshot]);
 
   // Restore a parsed snapshot: fields, knobs, chain, listen, osc type.
@@ -2635,6 +2626,14 @@ export default function App() {
               </span>
               <span className="cel-btn-glyph">{"\u3030"}</span>
             </button>
+            <button
+              type="button"
+              className="cel-btn cel-randomize-btn"
+              onClick={randomizeParams}
+            >
+              <span className="cel-btn-label">randomize</span>
+              <span className="cel-btn-glyph">{"\u2042"}</span>
+            </button>
           </div>
           <div className="cel-macros">
             {groupedKnobs.map((item) =>
@@ -2723,24 +2722,10 @@ export default function App() {
           <div className="cel-veil-actions">
             <button
               type="button"
-              className="cel-btn cel-randomize-btn"
-              onClick={randomizeParams}
-            >
-              Randomize
-            </button>
-            <button
-              type="button"
               className="cel-btn cel-snapshot-btn"
               onClick={exportSnapshot}
             >
               Save
-            </button>
-            <button
-              type="button"
-              className="cel-btn cel-snapshot-btn"
-              onClick={copySnapshot}
-            >
-              {copyFeedback ? "Copied!" : "Copy"}
             </button>
             <button
               type="button"
@@ -3075,10 +3060,11 @@ const CSS = `
     box-shadow: 0 0 20px currentColor, 0 0 40px currentColor;
   }
 
-  /* ── Controls row (Shadow + Breathe) ────────────────── */
+  /* ── Controls row (Eclipse + Breathe + Randomize) ───── */
 
   .cel-controls {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.8rem;
     justify-content: center;
     margin-bottom: 1rem;
@@ -3199,6 +3185,20 @@ const CSS = `
     box-shadow: none;
   }
 
+  /* ── Randomize button (controls-row peer) ───────────── */
+
+  .cel-randomize-btn {
+    flex-direction: row;
+    gap: 0.4rem;
+    padding: 0.6rem 1.4rem;
+  }
+
+  .cel-randomize-btn:hover:not(:disabled) {
+    background: rgba(180, 140, 255, 0.1);
+    border-color: rgba(180, 140, 255, 0.35);
+    box-shadow: none;
+  }
+
   .cel-osc-indicator {
     display: block;
     text-align: center;
@@ -3253,7 +3253,6 @@ const CSS = `
     margin: 0.8rem auto 0;
   }
 
-  .cel-randomize-btn,
   .cel-snapshot-btn {
     font-size: 0.75rem;
     padding: 0.4rem 1.2rem;
