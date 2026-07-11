@@ -603,7 +603,9 @@ export default function App() {
   const [activeChain, setActiveChain] = useState(ACTIVE_CHAIN);
   const activeChainRef = useRef(ACTIVE_CHAIN);
   const [orbit, setOrbit] = useState(false);
-  const orbitRef = useRef({ on: false, events: [], timeouts: [] });
+  // timeouts is a Set — fired timers remove themselves so hours of
+  // orbiting don't accumulate thousands of stale ids
+  const orbitRef = useRef({ on: false, events: [], timeouts: new Set() });
   const [perform, setPerform] = useState(false);
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
@@ -613,14 +615,40 @@ export default function App() {
   const loadInputRef = useRef(null);
   const listenPresetRef = useRef(DETECTED_LISTEN_PRESET);
 
+  // Engine application is throttled like the React render: pointermove
+  // fires at 60-120Hz and each KNOB_MAP apply touches up to 24 synths.
+  // 30Hz with a trailing flush is indistinguishable at the ear (ramped
+  // params just get smoother targets) and cuts main-thread churn during
+  // drags by ~3x. Pending values keep per-name so simultaneous touches
+  // both land their final values.
+  const engineApplyRef = useRef({ last: 0, timer: null, pending: new Map() });
+
   const setParam = useCallback((name, value) => {
     const p = paramsRef.current;
     p[name] = value;
-    const eng = engineRef.current;
-    if (eng) KNOB_MAP[name]?.apply(eng, value);
+
+    const a = engineApplyRef.current;
+    a.pending.set(name, value);
+    const flush = () => {
+      const eng = engineRef.current;
+      if (eng) {
+        for (const [n, v] of a.pending) KNOB_MAP[n]?.apply(eng, v);
+      }
+      a.pending.clear();
+    };
+    const now = performance.now();
+    clearTimeout(a.timer);
+    if (now - a.last > 33) {
+      a.last = now;
+      flush();
+    } else {
+      a.timer = setTimeout(() => {
+        a.last = performance.now();
+        flush();
+      }, 40);
+    }
 
     clearTimeout(trailingRenderRef.current);
-    const now = performance.now();
     if (now - renderThrottleRef.current > 50) {
       renderThrottleRef.current = now;
       setParams({ ...p });
@@ -1508,7 +1536,9 @@ export default function App() {
     const cfg = SIGN_CHARACTER[sign];
     const p = paramsRef.current;
     const vsKey = bankSuffix ? `${sign}${bankSuffix}` : sign;
+    const timeouts = orbitRef.current.timeouts;
     const t1 = setTimeout(() => {
+      timeouts.delete(t1);
       const ci = colorIndexRef.current[vsKey] || 0;
       colorIndexRef.current[vsKey] = (ci + 1) % 4;
       const had = !!visualStateRef.current[vsKey];
@@ -1527,6 +1557,7 @@ export default function App() {
       if (startLoopRef.current) startLoopRef.current();
     }, delayMs);
     const t2 = setTimeout(() => {
+      timeouts.delete(t2);
       const vs = visualStateRef.current[vsKey];
       if (vs && vs.stage !== "idle") {
         vs.releaseStartLevel = vs.envelopeLevel;
@@ -1535,7 +1566,8 @@ export default function App() {
         vs.releaseTime = p.release * cfg.releaseMul * VIS_SPEED;
       }
     }, delayMs + holdSec * 1000);
-    orbitRef.current.timeouts.push(t1, t2);
+    timeouts.add(t1);
+    timeouts.add(t2);
   }, []);
 
   const stopOrbit = useCallback((eng) => {
@@ -1543,7 +1575,7 @@ export default function App() {
     ob.events.forEach((id) => Tone.Transport.clear(id));
     ob.events = [];
     ob.timeouts.forEach(clearTimeout);
-    ob.timeouts = [];
+    ob.timeouts.clear();
     ob.on = false;
     if (eng) {
       for (const name of SIGN_NAMES) {
@@ -1781,11 +1813,11 @@ export default function App() {
           spawnOrbitVisual(e.sign, e.bank === "B" ? "_B" : "", delayMs, hold);
           if (e.bank === "A" && midiRef.current) {
             midiRef.current.noteOn(SIGN_INDEX[e.sign], cfg.note, cfg.octave, vel, detune);
-            const tOff = setTimeout(
-              () => midiRef.current?.noteOff(SIGN_INDEX[e.sign], cfg.note, cfg.octave),
-              delayMs + hold * 1000,
-            );
-            orbitRef.current.timeouts.push(tOff);
+            const tOff = setTimeout(() => {
+              orbitRef.current.timeouts.delete(tOff);
+              midiRef.current?.noteOff(SIGN_INDEX[e.sign], cfg.note, cfg.octave);
+            }, delayMs + hold * 1000);
+            orbitRef.current.timeouts.add(tOff);
           }
         },
         period,
@@ -1995,22 +2027,54 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleSign]);
 
-  // Transit fill — the current sky as a chart. Positions barely depend on
-  // location (only the Ascendant does), so no geolocation prompt; add a
-  // city for the rising sign.
+  // Transit fill — the current sky as a chart. The library interprets
+  // the time fields in the timezone at the given coordinates, so a bare
+  // local wall-clock at lng 0 would be read as UTC and land hours off.
+  // Geolocation (a contextual prompt, on the button press) fixes the
+  // timezone and buys the Ascendant; if it's denied or unavailable, the
+  // fields fill with UTC wall-time instead, which keeps the instant
+  // astronomically exact at the default coordinates.
+  const fillNowChart = useCallback(
+    (setDate, setTime, setLat, setLng, setQuery, selectedRef) => {
+      const pad = (n) => String(n).padStart(2, "0");
+      const d = new Date();
+      setDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+      setTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+      const fallbackToUtc = () => {
+        setDate(
+          `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
+        );
+        setTime(`${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`);
+        setLat(null);
+        setLng(null);
+        selectedRef.current = true;
+        setQuery("");
+      };
+      if (!navigator.geolocation) {
+        fallbackToUtc();
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setLat(pos.coords.latitude);
+          setLng(pos.coords.longitude);
+          selectedRef.current = true; // suppress autocomplete fetch
+          setQuery("here");
+        },
+        fallbackToUtc,
+        { timeout: 6000, maximumAge: 600000 },
+      );
+    },
+    [],
+  );
+
   const fillNowA = useCallback(() => {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    setNatalDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
-    setNatalTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-  }, []);
+    fillNowChart(setNatalDate, setNatalTime, setNatalLat, setNatalLng, setCityQueryA, citySelectedARef);
+  }, [fillNowChart]);
 
   const fillNowB = useCallback(() => {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    setNatalDateB(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
-    setNatalTimeB(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-  }, []);
+    fillNowChart(setNatalDateB, setNatalTimeB, setNatalLatB, setNatalLngB, setCityQueryB, citySelectedBRef);
+  }, [fillNowChart]);
 
   const cityCacheRef = useRef(new Map());
   const fetchCitySuggestions = async (query) => {
@@ -2620,7 +2684,8 @@ export default function App() {
 const CSS = `
   @font-face {
     font-family: 'Spiral ST';
-    src: url('/fonts/spiral-st/SpiralST.ttf') format('truetype');
+    src: url('${import.meta.env.BASE_URL}fonts/spiral-st/SpiralST.woff2') format('woff2'),
+         url('${import.meta.env.BASE_URL}fonts/spiral-st/SpiralST.ttf') format('truetype');
     font-display: swap;
   }
 

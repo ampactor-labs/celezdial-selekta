@@ -323,7 +323,10 @@ export async function createEngine(opts = {}) {
     latencyHint: "playback",
     sampleRate: TUNING.sampleRate,
     lookAhead: 0.3,
-    updateInterval: 0.025,
+    // 50ms scheduler ticks — half the main-thread timer churn of the old
+    // 25ms. Events land on exact audio-clock times regardless; with 300ms
+    // lookAhead the coarser check interval changes nothing audible.
+    updateInterval: 0.05,
   });
   Tone.setContext(ctx);
   await Tone.start();
@@ -469,6 +472,9 @@ export async function createEngine(opts = {}) {
     depth: TUNING.chorusDepth,
   });
   chorus.wet.value = TUNING.chorusWet;
+  // Chorus LFO needs an explicit start — without it the effect is a
+  // static widener and the RATE/DPTH knobs change nothing audible.
+  chorus.start();
 
   const distortion = new Tone.Distortion({
     distortion: TUNING.distortion,

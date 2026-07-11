@@ -210,7 +210,7 @@ Manual key exploration is always available. Toggling keys doesn't interfere with
 
 ## Transits
 
-Each chart header has a **now** button that fills the current date and time — the sky overhead as a chart. Birth chart in A, now in B, and the comparison machinery does the rest: shared signs glow, cross-chart aspects list and sound. Planetary positions barely depend on location, so there's no geolocation prompt; add a city if you want the Ascendant. The sky moves, so tomorrow's drone is different.
+Each chart header has a **now** button that fills the current date and time — the sky overhead as a chart. Birth chart in A, now in B, and the comparison machinery does the rest: shared signs glow, cross-chart aspects list and sound. The button asks for your location once: coordinates pin the timezone (the library reads the time fields in the timezone at the given point, so a bare local clock at longitude 0 would land hours off) and they buy the rising sign. Decline it and the fields fill with UTC instead — the instant stays exact, you just lose the Ascendant. The sky moves, so tomorrow's drone is different.
 
 ## Aspects
 

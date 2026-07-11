@@ -337,11 +337,13 @@ export const CHAINS = {
   // ── Void ──
   // Reverb before delay — delay repeats the already-reverbed signal,
   // creating infinite receding echoes. More diffuse, less defined.
-  // Signal: sum → cheby → dist → eq → vibrato → reverb → phaser → ECHO → chorus → monEQ → clip
+  // Signal: sum → cheby → [dist] → eq → vibrato → reverb → phaser → ECHO → chorus → monEQ → clip
+  // Distortion starts bypassed (wet=0 default, inserted when raised).
+  // Phaser stays wired: it borders the ECHO split, which the bypass
+  // mechanism's single prev→next edge can't express.
   void: {
     order: [
       "chebyshev",
-      "distortion",
       "eq3",
       "vibrato",
       "reverb",
@@ -351,74 +353,79 @@ export const CHAINS = {
       "monitorEQ",
       "softClip",
     ],
-    bypass: {},
+    bypass: {
+      distortion: { after: "chebyshev", before: "eq3" },
+    },
   },
 
   // ── Furnace ──
   // Delay before saturation — clean echoes get waveshaped together
   // with the dry signal. Progressively dirtier repeats.
-  // Signal: sum → ECHO → cheby → dist → eq → vibrato → reverb → chorus → phaser → monEQ → clip
+  // Signal: sum → ECHO → cheby → [dist] → eq → vibrato → reverb → chorus → [phaser] → monEQ → clip
   furnace: {
     order: [
       "ECHO",
       "chebyshev",
-      "distortion",
       "eq3",
       "vibrato",
       "reverb",
       "chorus",
-      "phaser",
       "monitorEQ",
       "softClip",
     ],
-    bypass: {},
+    bypass: {
+      distortion: { after: "chebyshev", before: "eq3" },
+      phaser: { after: "chorus", before: "monitorEQ" },
+    },
   },
 
   // ── Tape ──
   // Vibrato (wow/flutter) applied first — pitch drift feeds into
   // saturation, creating time-varying harmonic content.
-  // Signal: sum → vibrato → cheby → dist → eq → ECHO → reverb → chorus → phaser → monEQ → clip
+  // Signal: sum → vibrato → cheby → [dist] → eq → ECHO → reverb → chorus → [phaser] → monEQ → clip
   tape: {
     order: [
       "vibrato",
       "chebyshev",
-      "distortion",
       "eq3",
       "ECHO",
       "reverb",
       "chorus",
-      "phaser",
       "monitorEQ",
       "softClip",
     ],
-    bypass: {},
+    bypass: {
+      distortion: { after: "chebyshev", before: "eq3" },
+      phaser: { after: "chorus", before: "monitorEQ" },
+    },
   },
 
   // ── Evolve ──
   // Space effects BEFORE saturation — reverb/delay tails feed into
   // Chebyshev, generating new harmonics as they decay. Spectral
   // content evolves over time. Maximum harmonic density.
-  // Signal: sum → vibrato → ECHO → reverb → phaser → cheby → dist → eq → chorus → monEQ → clip
+  // Signal: sum → vibrato → ECHO → reverb → [phaser] → cheby → [dist] → eq → chorus → monEQ → clip
   evolve: {
     order: [
       "vibrato",
       "ECHO",
       "reverb",
-      "phaser",
       "chebyshev",
-      "distortion",
       "eq3",
       "chorus",
       "monitorEQ",
       "softClip",
     ],
-    bypass: {},
+    bypass: {
+      phaser: { after: "reverb", before: "chebyshev" },
+      distortion: { after: "chebyshev", before: "eq3" },
+    },
   },
 
   // ── Glass ──
   // No saturation — Chebyshev + Distortion skipped entirely.
   // Clean voices through EQ, vibrato, delay, reverb. Fragile, pure.
-  // Signal: sum → eq → vibrato → ECHO → reverb → chorus → phaser → monEQ → clip
+  // Signal: sum → eq → vibrato → ECHO → reverb → chorus → [phaser] → monEQ → clip
   glass: {
     order: [
       "eq3",
@@ -426,11 +433,12 @@ export const CHAINS = {
       "ECHO",
       "reverb",
       "chorus",
-      "phaser",
       "monitorEQ",
       "softClip",
     ],
-    bypass: {},
+    bypass: {
+      phaser: { after: "chorus", before: "monitorEQ" },
+    },
   },
 
   // ── Zodiac ──
