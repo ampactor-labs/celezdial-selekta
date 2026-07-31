@@ -243,6 +243,12 @@ All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW
 
 The code splits along its seams: the audio graph in `src/engine.js`, chart math in `src/astro.js`, sign data in `src/signs.js`, snapshot and share-link codec in `src/snapshot.js`, MIDI out in `src/midi.js`. The React component and the visual system stay in `src/App.jsx`.
 
+## Verification
+
+5 test files, 73 cases, run with `npm test` (vitest). They cover the tuning tables, the zodiac-to-note mapping, and the aspect math, which are the parts where a wrong number is audible but hard to trace.
+
+CI builds and deploys but does not run the tests (`.github/workflows/deploy.yml`). Nothing here verifies how it sounds; that is still ears only.
+
 ## Weak spots
 
 Twelve voices through eight FX chains is a lot to ask of Web Audio on a phone. On older hardware, voice count is the first thing to cut, and there is no automatic quality scaling to do it for you.
