@@ -2,6 +2,8 @@
 
 Polyphonic ambient synthesizer mapped to the zodiac. 12 voices toggle on a chromatic keyboard (C to B), shaped by a wall of parameter knobs across 8 FX chains you can swap live from the controls veil. Birth charts select the voices, aspects color them, and orbit mode breathes them on planetary periods. Built with React and Tone.js.
 
+**Status: shipping.** Runs in the browser; twelve simultaneous voices are heavy on older phones.
+
 ## Signal Chain (Zodiac, the active default)
 
 ```
@@ -240,3 +242,9 @@ npm run dev
 All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER, ASPECTS, PLANET_ORBIT_DAYS. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for tuning.js.
 
 The code splits along its seams: the audio graph in `src/engine.js`, chart math in `src/astro.js`, sign data in `src/signs.js`, snapshot and share-link codec in `src/snapshot.js`, MIDI out in `src/midi.js`. The React component and the visual system stay in `src/App.jsx`.
+
+## Weak spots
+
+Twelve voices through eight FX chains is a lot to ask of Web Audio on a phone. On older hardware, voice count is the first thing to cut, and there is no automatic quality scaling to do it for you.
+
+Tone.js scheduling is browser-dependent, so timing under load is not guaranteed. There is no CI beyond the deploy workflow.
