@@ -224,7 +224,7 @@ They also change the sound:
 - Conjunctions focus them (+4%)
 - Squares and oppositions detune: when both voices of a tense pair sound, the later arrival shifts 4¢ off its natal tuning, and the beating carries the tension through the Chebyshev intermodulation
 
-The numbers live in `tuning.js` under the `aspect*` keys and vary per preset — Harmonic Furnace pushes 7¢ of tension, Glass Meridian just 3¢.
+The numbers live in `src/tuning.js` under the `aspect*` keys and vary per preset — Harmonic Furnace pushes 7¢ of tension, Glass Meridian just 3¢.
 
 ## Orbit
 
@@ -239,7 +239,7 @@ npm run dev
 
 ## Tuning
 
-All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER, ASPECTS, PLANET_ORBIT_DAYS. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for tuning.js.
+All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER, ASPECTS, PLANET_ORBIT_DAYS. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for `src/tuning.js`.
 
 The code splits along its seams: the audio graph in `src/engine.js`, chart math in `src/astro.js`, sign data in `src/signs.js`, snapshot and share-link codec in `src/snapshot.js`, MIDI out in `src/midi.js`. The React component and the visual system stay in `src/App.jsx`.
 
