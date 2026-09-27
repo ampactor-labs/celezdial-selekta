@@ -1,256 +1,100 @@
 # Celezdial Selekta
 
-Polyphonic ambient synthesizer mapped to the zodiac. 12 voices toggle on a chromatic keyboard (C to B), shaped by a wall of parameter knobs across 8 FX chains you can swap live from the controls veil. Birth charts select the voices, aspects color them, and orbit mode breathes them on planetary periods. Built with React and Tone.js.
+An ambient synthesizer for the browser that maps the twelve zodiac signs to twelve voices on a piano-style keyboard, C through B. Each voice is detuned toward a pitch derived from its ruling planet's orbit, and all voices are summed before one waveshaper (a curve that bends the waveform) so it adds sum and difference tones between the notes. Enter one or two birth dates and every planet lights its sign's key, retuned by its degree within the sign. It is built with React and Tone.js.
 
-**Status: shipping.** Runs in the browser; twelve simultaneous voices are heavy on older phones.
+**Status: working.** It is deployed and runs end to end, but the v14 snapshot format may still change and many voices at once are heavy on older phones.
 
-## Signal Chain (Zodiac, the active default)
+Live: https://ampactor.dev/celezdial-selekta/
 
-```
-12 × PolySynth (per-sign oscType via planetary character + Cousto detune)
-  → Panners (4 LFO groups, slow stereo drift)
-  → sumBus ─────────────────── polyphonic sum before saturation
-      → Highpass (35Hz, -12dB/oct)
-      → Vibrato (VHS wow, 0.08Hz)
-      → Echo (delay → LPF → tanh sat → feedback, hand-wired)
-      → EQ3 (tape shelving)
-      → Chebyshev (order 2, even harmonics on summed voices)
-      → [Distortion: bypassed]
-      → Freeverb (room 0.88, swept damping)
-      → Chorus (on by default, stereo width)
-      → [Phaser: bypassed]
-      → Monitor EQ (listening environment comp)
-      → Soft clip (tanh limiter)
-      → out
-```
+## Quick start
 
-Summing before the Chebyshev is the whole point: polynomial waveshaping on a polyphonic mix generates sum and difference tones between partials. Order 2 gives even harmonics only, which reads as octave doubling and warmth. Order 3 creates harsh odd-harmonic intermodulation on dense material, so it's bypassed for the ambient default.
+Try it at the live link, or run it locally with Node.js and npm (CI builds with Node 22):
 
-## Voicing Strategy
-
-Dim7-derived octave partitioning keeps any two notes in the same octave from sitting a semitone apart. The chromatic scale's 12 notes are distributed across three octaves in diminished-seventh groups:
-
-| Octave | Notes | Interval pattern |
-|--------|-------|-----------------|
-| 3 | C, Eb, Gb, A | dim7 (minor thirds) |
-| 4 | D, F, Ab, B | dim7 |
-| 5 | Db, E, G, Bb | dim7 |
-
-Within any single octave, the closest interval is a minor third (3 semitones), so there are no semitone or whole-tone clashes when adjacent signs sound together. The three dim7 groups interlock to cover all 12 chromatic pitches.
-
-Velocity follows the astrological hierarchy: luminaries (Sun and Moon signs) are loudest, personal-planet signs next, social planets quietest.
-
-| Tier | Ruler | Signs | Velocity |
-|------|-------|-------|----------|
-| Luminary | Sun | Leo | 0.65 |
-| Luminary | Moon | Cancer | 0.60 |
-| Personal | Mars | Aries, Scorpio | 0.52, 0.48 |
-| Personal | Venus | Taurus, Libra | 0.50, 0.47 |
-| Personal | Mercury | Gemini, Virgo | 0.48, 0.45 |
-| Social | Jupiter | Sagittarius, Pisces | 0.40, 0.38 |
-| Social | Saturn | Capricorn, Aquarius | 0.35, 0.33 |
-
-## Voices
-
-| Sign | Note | Oct | Vel | Cousto ¢ | Osc Type | Pan | Count | Spread ¢ |
-|------|------|-----|-----|----------|----------|-----|-------|----------|
-| Aquarius ♒︎ | C | 3 | 0.33 | +6 | fmtriangle | A | — | — |
-| Pisces ♓︎ | Db | 5 | 0.38 | −6.5 | amtriangle | D | — | — |
-| Aries ♈︎ | D | 4 | 0.52 | −12.5 | fatsawtooth | B | 2 | 8 |
-| Taurus ♉︎ | Eb | 3 | 0.50 | +5 | fattriangle | C | 2 | 5 |
-| Gemini ♊︎ | E | 5 | 0.48 | +16.5 | fmsine | B | — | — |
-| Cancer ♋︎ | F | 4 | 0.60 | +11.5 | amsine | D | — | — |
-| Leo ♌︎ | Gb | 3 | 0.65 | +19 | fatsine | B | 2 | 5 |
-| Virgo ♍︎ | G | 5 | 0.45 | +16.5 | fmsine | A | — | — |
-| Libra ♎︎ | Ab | 4 | 0.47 | +5 | fattriangle | C | 2 | 8 |
-| Scorpio ♏︎ | A | 3 | 0.48 | −12.5 | fatsawtooth | C | 2 | 5 |
-| Sagittarius ♐︎ | Bb | 5 | 0.40 | −6.5 | amtriangle | D | — | — |
-| Capricorn ♑︎ | B | 4 | 0.35 | +6 | fmtriangle | A | — | — |
-
-Four pan groups (A through D), each driven by an independent LFO at 0.03Hz. Voices in the same group drift together. Count and Spread apply only to the fat oscillator types (5 signs); the AM and FM types (7 signs) don't use detuned oscillator stacks. Fletcher-Munson compensation flattens perceived loudness across the range (+5dB oct 3, +2dB oct 3, 0dB oct 4, −2dB oct 5). Adaptive voicing adds a `5 × log10(12 / active)` dB boost for sparse voicings (1 voice = +5.4dB, 3 = +3dB, 12 = 0dB).
-
-## Cousto Planetary Tuning
-
-Hans Cousto's *Cosmic Octave* (1978) takes planetary orbital periods and octave-transposes them into audible frequencies. Each sign is microtonally detuned by its traditional ruling planet's deviation from 12-TET.
-
-It's applied at 50% strength (the `detuneCents` column in Voices is half the raw Cousto offset). That's enough color to feel the planetary character without quarter-tone shock on dense voicings.
-
-Signs that share a ruler share the same offset, so they end up "in tune" with each other through planetary resonance:
-
-| Ruler | Raw ¢ | Applied ¢ | Signs |
-|-------|-------|-----------|-------|
-| Sun | +38 | +19 | Leo |
-| Moon | +23 | +11.5 | Cancer |
-| Mercury | +33 | +16.5 | Gemini, Virgo |
-| Venus | +10 | +5 | Taurus, Libra |
-| Mars | −25 | −12.5 | Aries, Scorpio |
-| Jupiter | −13 | −6.5 | Pisces, Sagittarius |
-| Saturn | +12 | +6 | Aquarius, Capricorn |
-
-Two independent systems coexist: Lionel's chromatic-calendar determines the note class (C through B), and Cousto determines the cents offset within that note. In natal mode, a degree-based detune (`(degree - 15) × 3.33¢`) replaces Cousto.
-
-## Planetary Character
-
-Each sign inherits its ruling planet's sonic personality: an oscillator type and a set of ADSR envelope multipliers. Orbital speed maps to envelope speed. Inner planets (Mars, Mercury) have fast, driven envelopes; outer planets (Jupiter, Saturn) are slow and expansive.
-
-| Planet | Osc Type | ATK | DEC | SUS | REL | Character |
-|--------|----------|-----|-----|-----|-----|-----------|
-| Sun | fatsine | ×0.8 | ×0.9 | ×1.1 | ×0.9 | Warm center, assertive |
-| Moon | amsine | ×1.2 | ×1.1 | ×1.0 | ×1.3 | Tidal AM, emotional sustain |
-| Mars | fatsawtooth | ×0.6 | ×0.7 | ×0.9 | ×0.8 | Aggressive harmonics, driven |
-| Venus | fattriangle | ×1.3 | ×1.1 | ×1.1 | ×1.1 | Warm rounded, graceful |
-| Mercury | fmsine | ×0.7 | ×0.8 | ×0.9 | ×0.8 | Metallic FM precision |
-| Jupiter | amtriangle | ×1.4 | ×1.2 | ×1.0 | ×1.4 | Expansive AM warmth |
-| Saturn | fmtriangle | ×1.5 | ×1.3 | ×1.0 | ×1.5 | Structured FM complexity |
-
-Envelope knobs set a base value; each sign multiplies by its planet's factor. With the default 2.8s attack, Mars signs attack in about 1.7s and Saturn in about 4.2s. The result is a staggered bloom where the inner-planet voices arrive first.
-
-Three oscillator families:
-- **Fat** (5 signs: Leo, Aries, Scorpio, Taurus, Libra): detuned oscillator stacks that support count/spread and the Eclipse spread ramp
-- **AM** (3 signs: Cancer, Sagittarius, Pisces): amplitude modulation, bell-like to warm
-- **FM** (4 signs: Gemini, Virgo, Capricorn, Aquarius): frequency modulation, metallic to structured
-
-Signs that share a ruler share identical character. Aries and Scorpio both get Mars's aggressive fatsawtooth; Taurus and Libra both get Venus's graceful fattriangle.
-
-## Astrological System
-
-Traditional (pre-modern) planetary rulership: 7 visible planets, no co-rulers (Uranus, Neptune, Pluto). This matches Cousto's original system and makes for cleaner shared-ruler pairs.
-
-| Sign | Ruler | Tier |
-|------|-------|------|
-| Leo | Sun | Luminary |
-| Cancer | Moon | Luminary |
-| Aries | Mars | Personal |
-| Scorpio | Mars | Personal |
-| Taurus | Venus | Personal |
-| Libra | Venus | Personal |
-| Gemini | Mercury | Personal |
-| Virgo | Mercury | Personal |
-| Sagittarius | Jupiter | Social |
-| Pisces | Jupiter | Social |
-| Capricorn | Saturn | Social |
-| Aquarius | Saturn | Social |
-
-## FX Chains
-
-Eight pre-wired chains: the same nodes in a different order, for a different character.
-
-| Chain | Order (abbreviated) | Character |
-|-------|---------------------|-----------|
-| **Zodiac** | vib → echo → eq → cheby → rev → cho | Balanced. Pretty on load, cosmic at extremes |
-| Cathedral | cheby → eq → vib → echo → rev → cho | Saturation first, warm and thick |
-| Void | cheby → dist → eq → vib → rev → pha → echo → cho | Reverb before delay, infinite receding echoes |
-| Furnace | echo → cheby → dist → eq → vib → rev → cho → pha | Clean echoes re-enter the waveshaper and get dirtier |
-| Tape | vib → cheby → dist → eq → echo → rev → cho → pha | Pitch drift feeds saturation, time-varying harmonics |
-| Evolve | vib → echo → rev → pha → cheby → dist → eq → cho | Space before saturation, new harmonics as tails decay |
-| Glass | eq → vib → echo → rev → cho → pha | No saturation at all, crystalline |
-| Custom | (blank slate, uncomment and reorder) | Build your own |
-
-## Controls
-
-**Keyboard**: 12 zodiac keys, click to toggle voices on and off. Chromatic layout, C through B. The QWERTY row `awsedftgyhuj` mirrors the keys piano-style (a=C, w=Db, s=D ... j=B) — the hint letter sits on each key.
-
-**Knobs**: drag vertically. Shift-drag for fine control. Double-click to reset. Focused knobs answer arrow keys (shift for fine steps) and the scroll wheel.
-
-| Group | Knobs |
-|-------|-------|
-| Oscillator | HARM (AM/FM harmonicity), MOD (FM mod index), SPRD (fat detuning ¢), STGR (natal stagger) |
-| Envelope | ATK, DEC, SUS, REL (× per-sign planetary multiplier) |
-| Vibrato | RATE, DPTH, MIX |
-| Pan | RATE, WDTH |
-| Echo | TIME, FDBK, MIX, FILT |
-| EQ | LOW, MID, HIGH, HI x |
-| Chebyshev | ORD, MIX |
-| Distortion | DRIV, MIX |
-| Reverb | ROOM, DAMP, MIX, MOD, AMT |
-| Chorus | RATE, DLY, DPTH, MIX |
-| Phaser | RATE, OCT, BASE, Q, MIX |
-
-**Play/Pause**: Play sweeps all chart-active keys with STGR stagger timing (default 0.06s). Pause releases all voices.
-
-**Eclipse**: chaos mode. FX params ramp toward extreme values over 16 seconds (feedback 0.87, reverb wet 0.85, chebyshev wet 0.85, spread 120¢ on fat types only, and so on). Toggle it off to restore.
-
-**[OSC_TYPE]**: cycles the oscillator type, per-sign (planetary defaults) → fatsine → amsine → fattriangle → amtriangle → fmtriangle → fatsawtooth → fmsine → fatsquare → back to per-sign. On per-sign, each sign uses its ruling planet's oscillator. On a uniform type, all 12 signs share one.
-
-**Look Within**: a dot pyramid, always visible. Clicking it opens the Controls veil, where Eclipse, Breathe, the knobs, listen presets, randomize, and snapshot export all live. Discoverable, not advertised.
-
-**Chains**: a pill row in the veil switches between the eight FX chains live. The engine rewires its graph behind a short fade — same nodes, different order, different instrument.
-
-**Listen**: monitor EQ presets for headphones, laptop speakers, phone, or loudspeakers. It auto-detects the device type on load via `matchMedia` (phone vs laptop vs headphones default).
-
-**MIDI**: a pill that cycles through your MIDI outputs (Chrome and friends; it hides where Web MIDI is missing). Chart A's voices go out on channels 1 to 12, one channel per sign, with the natal detune riding each channel's pitch bend. Plug in hardware and the chart plays your rig.
-
-**Randomize**: throws the knobs.
-
-**Record**: taps the chain tail — the exact signal the speakers get — and downloads a `.webm` when you stop.
-
-**Perform**: fullscreen, keyboard and emanation only. Inputs, knobs, and footer step aside; ✕ or Esc exits. Made for projectors.
-
-**Snapshot**: Save downloads a `.json` file with the full sound state (all knob values, both banks' active signs, chain, osc type, listen preset, eclipse, orbit, and both charts' birth inputs). Copy puts the same JSON on the clipboard, Load restores one. It's enough to recreate the sound in another Tone.js project.
-
-**Link**: copies a URL carrying that same state in the fragment. Fragments never leave the browser, so birth data stays off the network. Opening a link restores everything silently; Play is the first sound. A QR code of a link turns a room of phones into the instrument.
-
-## Natal Chart
-
-Enter birth data for two people, Chart A and Chart B. Each chart is computed as a tropical whole-sign horoscope via `circular-natal-horoscope-js`. Every celestial body (Sun, Moon, Mercury through Pluto, Chiron) activates the voice of its zodiac sign. If you give a birth time, the Ascendant activates its sign too.
-
-**Dual chart comparison**: both charts are active at once. Keys fire whichever charts own that sign. If only Chart A has Aries, one voice sounds. If both charts have Aries, both voices sound together, and you hear the harmonic relationship between two different tunings of the same sign. Shared keys (signs present in both charts) get a breathing amber-and-teal glow that marks the resonance points between the two charts.
-
-**Play/Pause**: Play sweeps all chart-active keys chromatically (C to B) with stagger timing set by the STGR knob (default 0.06s). Pause releases all voices. Manual key clicking always works on its own.
-
-**Info panel**: shows the shared signs first (with both charts' planets listed), then the signs unique to each chart. The context line reads in plain language: "Two birth charts compared. Shared signs play both voices together."
-
-Each body's ecliptic degree within its sign (0 to 30°) applies a microtonal detune: `(degree - 15) * 3.33¢`. A planet at the start of a sign detunes −50¢, mid-sign stays centered, end of sign +50¢. Two people with Sun in Aries hear different tunings depending on where in Aries their Sun sits. When both voices sound together, that's the interval you hear.
-
-Partial data is fine:
-
-- **Date only**: valid planetary positions, no Ascendant (that needs a time)
-- **Date and time**: planets plus Ascendant (accuracy improves once you add a location)
-- **All four fields**: fully accurate positions
-
-Manual key exploration is always available. Toggling keys doesn't interfere with the chart voices.
-
-## Transits
-
-Each chart header has a **now** button that fills the current date and time — the sky overhead as a chart. Birth chart in A, now in B, and the comparison machinery does the rest: shared signs glow, cross-chart aspects list and sound. The button asks for your location once: coordinates pin the timezone (the library reads the time fields in the timezone at the given point, so a bare local clock at longitude 0 would land hours off) and they buy the rising sign. Decline it and the fields fill with UTC instead — the instant stays exact, you just lose the Ascendant. The sky moves, so tomorrow's drone is different.
-
-## Aspects
-
-The chart's angular relationships play. Within each chart the library computes the majors — conjunction ☌, opposition ☍, trine △, square □, sextile ⚹. Across two charts the app computes synastry aspects from ecliptic longitudes directly, with tighter orbs (6° conjunction and opposition, 5° trine and square, 4° sextile). Both kinds appear in the info panel.
-
-They also change the sound:
-
-- Trines and sextiles lift the involved signs' velocities (+3% each, capped at +10%)
-- Conjunctions focus them (+4%)
-- Squares and oppositions detune: when both voices of a tense pair sound, the later arrival shifts 4¢ off its natal tuning, and the beating carries the tension through the Chebyshev intermodulation
-
-The numbers live in `src/tuning.js` under the `aspect*` keys and vary per preset — Harmonic Furnace pushes 7¢ of tension, Glass Meridian just 3¢.
-
-## Orbit
-
-Orbit stops sustaining and breathes. Each chart-active voice swells and releases on a cycle derived from its ruling planet's orbital period, log-mapped into human time: Moon-ruled Cancer cycles every 16 seconds, Saturn-ruled Capricorn and Aquarius every 88 (`orbitPeriodMin`/`orbitPeriodMax`). Phases spread on the golden ratio so the voices never line up, and the whole thing phases like a slow ensemble. It's the Cousto move applied to rhythm instead of pitch. Leave it on.
-
-## Setup
-
-```bash
+```sh
 npm install
 npm run dev
 ```
 
-## Tuning
+Vite serves the app at `http://localhost:3000/celezdial-selekta/` and opens it in your browser. Click or tap any key: the first gesture starts the audio engine, and the voice fades in over 1.7 to 4.2 seconds depending on its sign. To hear a birth chart, enter a date under Chart A and press Play. The knobs, effect chains, listening presets and file actions sit behind the dotted "look within" block, and a short guide on the page explains what you are hearing.
 
-All the sound-shaping numbers live in `src/tuning.js`: TUNING, OSC_TYPES, SHADOW, KNOB_DEFS, KNOB_GROUPS, LISTEN_PRESETS, CHAINS, ACTIVE_CHAIN, ZODIAC_NOTES, OCTAVE_GAIN, COUSTO_DETUNE, SIGN_RULERS, PLANETARY_CHARACTER, ASPECTS, PLANET_ORBIT_DAYS. Change a value, hear the difference. The alternative tuning profiles in `src/presets/` (deep-space-oracle, glass-meridian, tape-seance, harmonic-furnace, zodiac) are drop-in replacements for `src/tuning.js`.
+## How it works
 
-The code splits along its seams: the audio graph in `src/engine.js`, chart math in `src/astro.js`, sign data in `src/signs.js`, snapshot and share-link codec in `src/snapshot.js`, MIDI out in `src/midi.js`. The React component and the visual system stay in `src/App.jsx`.
+The app is polyphonic: many notes can sound at once. It builds 24 Tone.js synth voices, one per sign in each of two banks, so Chart A and Chart B can each sound all twelve signs. `src/App.jsx` holds the interface and starts and stops voices. `src/astro.js` turns birth data into signs to sound, and `src/engine.js` builds the audio graph. Most numbers that shape the sound live in `src/tuning.js`, and the per-sign data lives in `src/signs.js`. All voices run through one effects chain:
 
-## Verification
+```text
+24 voices -> panners -> sum bus -> high-pass (35 Hz) -> vibrato -> echo
+  -> 3-band EQ -> Chebyshev waveshaper -> [distortion] -> reverb -> chorus
+  -> [phaser] -> listening EQ -> soft clip -> speakers and recorder
+```
 
-5 test files, 73 cases, run with `npm test` (vitest). They cover the tuning tables, the zodiac-to-note mapping, and the aspect math, which are the parts where a wrong number is audible but hard to trace.
+This is the default `zodiac` order. Bracketed stages join the path only when their mix knob is above zero, and six other orders can be swapped in live. Three decisions shaped the sound.
 
-CI builds and deploys but does not run the tests (`.github/workflows/deploy.yml`). Nothing here verifies how it sounds; that is still ears only.
+### Sum before saturation
 
-## Weak spots
+The voices meet on one bus before the Chebyshev waveshaper. On a single sine wave, the order-2 Chebyshev curve produces the octave above. On a sum of notes it also multiplies the notes together, which adds sum and difference tones between them, so the chord makes tones of its own. Order 3 adds odd harmonics that sound harsh on dense chords, so the default is order 2 at a 25% mix.
 
-Twelve voices through eight FX chains is a lot to ask of Web Audio on a phone. On older hardware, voice count is the first thing to cut, and there is no automatic quality scaling to do it for you.
+### Planetary tuning
 
-Tone.js scheduling is browser-dependent, so timing under load is not guaranteed. There is no CI beyond the deploy workflow.
+Each sign's note follows Lionel Williams' chromatic calendar, which lays the zodiac year over one octave: Aquarius is C, and Aries, the spring equinox, is D. The notes spread over three octaves in groups a minor third apart, so no two notes in one octave are closer than three semitones. Each voice is then microtuned (moved between the twelve standard pitches) toward its ruling planet's tone in Hans Cousto's cosmic octave, which shifts orbital periods up by octaves until they can be heard. The offsets play at half strength, from −12.5 to +19 cents (hundredths of a semitone), to keep the planetary colour without quarter-tone clashes.
+
+### Natal-chart mode
+
+A natal chart records where the Sun, Moon and planets stood at a moment of birth. The `circular-natal-horoscope-js` library computes it in the browser, and each body lights the key of its sign. The body's degree within the sign replaces the Cousto offset with −50 to +50 cents. Chart B plays on the second bank, so a sign both charts share sounds two tunings of one note at once, heard as beating. Aspects (the angles between planets) make voices louder or pull pairs slightly out of tune, and Orbit mode swells each voice on a cycle set by its ruler's orbital period, from 16 s for the Moon to 88 s for Saturn.
+
+[docs/DESIGN.md](docs/DESIGN.md) has the rest: the settings of every stage, tables for all twelve voices, the eight chain orders, the chart features and a reference for every control.
+
+## Project layout
+
+```text
+src/
+  App.jsx        interface: keyboard, charts, knobs, canvas glow
+  engine.js      Tone.js audio graph, chain wiring, knob-to-parameter map
+  tuning.js      sound-shaping numbers: effects, knobs, chains, rulers, aspects
+  signs.js       the twelve voices: note, octave, velocity, tuning, pan, colours
+  astro.js       chart computation, aspects, orbit periods
+  snapshot.js    snapshot format and share-link codec
+  midi.js        Web MIDI output
+  utils.js       colour, formatting and knob-geometry helpers
+  presets/       five older tuning profiles (see Limitations)
+  __tests__/     Vitest suites
+public/fonts/    the Spiral ST title font
+docs/DESIGN.md   design notes and the full controls reference
+```
+
+## Deploy
+
+GitHub Pages serves the site at https://ampactor.dev/celezdial-selekta/. Every push to `main` runs [.github/workflows/deploy.yml](.github/workflows/deploy.yml), which installs with `npm ci` on Node 22, runs `npm run build` and publishes the `build/` folder. The workflow can also be started by hand. Vite builds with the base path `/celezdial-selekta/` ([vite.config.js](vite.config.js)), so the built files expect to be served from that path.
+
+## Testing
+
+```sh
+npm test
+```
+
+This runs Vitest over the five files in `src/__tests__/`. The summary reports 110 tests, all passing:
+
+- `astro.test.js` (17 tests): angular distance, cross-chart aspects and their orbs, how aspects become loudness boosts and tension partners, orbit periods, and one real chart (the Sun on 2000-01-01 lands in Capricorn with a plausible detune).
+- `snapshot.test.js` (7): the snapshot round trip, the older v12 shape, malformed input, and the share-link codec with its number rounding and non-ASCII city names.
+- `tuning.test.js` (10): knob defaults inside their ranges, required fields, chain definitions, the sign-ruler table and the sample-rate setting.
+- `presets.test.js` (41): each file in `src/presets/` exports the six names the test expects and names a chain it defines.
+- `utils.test.js` (35): colour conversion, value formatting, logarithmic and stepped knob scales, and knob arc geometry.
+
+`npm run lint` runs ESLint over `src/` and passes with no warnings. CI runs neither command: [deploy.yml](.github/workflows/deploy.yml) only builds and deploys. No test covers the audio engine, the interface, MIDI, recording or the sign table in `src/signs.js`, and nothing checks how it sounds, which is still done by ear.
+
+## Limitations
+
+The full instrument is heavy for a phone. Two charts can sound 24 synth voices at once, twelve per chart. Every voice feeds one effects chain, nine stages long in the default order, and the chain keeps running between notes. Nothing scales the quality down automatically when a device falls behind, so on an older phone you have to sound fewer keys yourself.
+
+- Mid-range Android phones glitched until the engine switched to the device's native sample rate (commit `89e3feb`). This repository keeps no measurements of phone performance.
+- Tone.js schedules every note 300 ms ahead, so a key sounds about 300 ms after you press it, plus the device's own output latency. MIDI notes go out at once and lead the browser's own sound by that much. A main-thread stall longer than the look-ahead makes notes late.
+- In the first bank, each voice's own pan position is lost: connecting an LFO (a low-frequency oscillator, used as a slow automatic knob) to a Tone.js parameter resets the parameter to zero (`connectSignal` in Tone.js 14.7.77). The four pan groups also move in step. [docs/DESIGN.md](docs/DESIGN.md#stereo-placement) has the detail.
+- Load and Link restore the knobs, chain, oscillator mode, listening preset and both charts, and leave playback off. The keys that were sounding and the Eclipse and Orbit switches are saved in the file but not restored.
+- A chart gets coordinates only from a picked city suggestion or the `now` button. Without them it is cast at latitude and longitude 0, where the time is read as UTC. The chart is then off by the birthplace's offset from UTC, and the Ascendant (rising sign) is the one for that point.
+- The city field sends what you type to OpenStreetMap's Nominatim service, and the `now` button sends your coordinates there to name the place. Chart math runs in the browser, and a share link keeps its state in the URL fragment, which browsers do not send to the web server.
+- MIDI out carries only the first bank (Chart A, and keys played outside any chart). It needs a browser with Web MIDI and assumes a pitch-bend range of 2 semitones on the receiving synth.
+- A recording keeps the browser's default MediaRecorder format, but the file is always named `.webm`.
+- The five profiles in `src/presets/` follow an older layout of `src/tuning.js`, so copying one over it breaks the build. Some settings in `tuning.js` have no effect: `ZODIAC_NOTES`, `COUSTO_DETUNE`, the `orb` values in `ASPECTS` and `retriggerGap`. The `custom` chain appears in no menu.
+
+## License
+
+No license chosen yet. The Spiral ST title font in `public/fonts/spiral-st/` comes with its own terms, the 1001Fonts Free For Commercial Use License in [1001fonts-spiral-st-eula.txt](public/fonts/spiral-st/1001fonts-spiral-st-eula.txt).
